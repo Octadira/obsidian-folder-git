@@ -1,0 +1,10 @@
+node_modules/
+main.js
+.DS_Store
+.vscode/
+.idea/
+test-vault/
+.obsidian/
+coverage/
+npm-debug.log
+yarn-error.log

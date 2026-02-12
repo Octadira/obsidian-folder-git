@@ -1,0 +1,785 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Folder Git — VS Code-inspired Source Control for Obsidian
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Variables ─────────────────────────────────────────────────────────────── */
+.folder-git-source-control,
+.folder-git-history {
+    --fg-accent: var(--interactive-accent);
+    --fg-green: #2ea043;
+    --fg-red: #f85149;
+    --fg-orange: #d29922;
+    --fg-blue: #58a6ff;
+    --fg-yellow: #e3b341;
+    --fg-dimmed: var(--text-muted);
+    --fg-border: var(--background-modifier-border);
+    --fg-hover: var(--background-modifier-hover);
+    --fg-radius: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Ribbon Icon Badge
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-ribbon-icon {
+    position: relative;
+}
+
+.folder-git-badge {
+    position: absolute;
+    top: -2px;
+    right: -4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 10px;
+    background: var(--fg-red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    pointer-events: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    animation: folder-git-badge-pop 0.2s ease;
+    z-index: 10;
+}
+
+@keyframes folder-git-badge-pop {
+    0% {
+        transform: scale(0);
+        opacity: 0;
+    }
+
+    70% {
+        transform: scale(1.2);
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Repo List (Sidebar)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-repo-list-wrap {
+    width: 100%;
+}
+
+.folder-git-repo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0;
+}
+
+.folder-git-repo-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--fg-radius);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-size: 12px;
+    border: 1px solid transparent;
+}
+
+.folder-git-repo-item:hover {
+    background: var(--fg-hover);
+}
+
+.folder-git-repo-item.active {
+    background: rgba(var(--interactive-accent-rgb), 0.1);
+    border-color: rgba(var(--interactive-accent-rgb), 0.3);
+}
+
+.folder-git-repo-item.has-changes {
+    background: rgba(210, 153, 34, 0.06);
+}
+
+.folder-git-repo-item.active.has-changes {
+    background: rgba(var(--interactive-accent-rgb), 0.1);
+    border-color: rgba(var(--interactive-accent-rgb), 0.3);
+}
+
+/* Status indicator dot */
+.folder-git-repo-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.folder-git-repo-indicator-clean {
+    background: var(--fg-green);
+    box-shadow: 0 0 4px rgba(46, 160, 67, 0.4);
+}
+
+.folder-git-repo-indicator-changes {
+    background: var(--fg-orange);
+    box-shadow: 0 0 4px rgba(210, 153, 34, 0.4);
+    animation: folder-git-pulse 2s ease-in-out infinite;
+}
+
+@keyframes folder-git-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.folder-git-repo-icon {
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.folder-git-repo-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-repo-name {
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+.folder-git-repo-change-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--fg-orange);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+/* Header row for branch badge + actions */
+.folder-git-header-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding-top: 4px;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+.folder-git-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--fg-border);
+    flex-wrap: wrap;
+}
+
+.folder-git-selector-wrap {
+    flex: 1;
+    min-width: 120px;
+}
+
+.folder-git-repo-select {
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: var(--fg-radius);
+    border: 1px solid var(--fg-border);
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+}
+
+.folder-git-repo-select:hover {
+    border-color: var(--fg-accent);
+}
+
+.folder-git-branch-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--background-secondary-alt);
+    font-size: 11px;
+    color: var(--fg-blue);
+    font-weight: 500;
+}
+
+.folder-git-branch-icon {
+    display: flex;
+    align-items: center;
+}
+
+.folder-git-branch-icon svg {
+    width: 12px;
+    height: 12px;
+}
+
+.folder-git-sync-info {
+    display: flex;
+    gap: 4px;
+    margin-left: 4px;
+    color: var(--fg-dimmed);
+    font-size: 10px;
+}
+
+.folder-git-header-actions {
+    display: flex;
+    gap: 2px;
+}
+
+/* ── Icon Buttons ──────────────────────────────────────────────────────────── */
+.folder-git-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: var(--fg-radius);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.folder-git-icon-btn:hover {
+    background: var(--fg-hover);
+    color: var(--text-normal);
+}
+
+.folder-git-icon-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.folder-git-discard-btn:hover {
+    color: var(--fg-red);
+}
+
+/* ── Commit Area ───────────────────────────────────────────────────────────── */
+.folder-git-commit-area {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--fg-border);
+}
+
+.folder-git-commit-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--fg-border);
+    border-radius: var(--fg-radius);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    font-family: var(--font-interface);
+    resize: vertical;
+    min-height: 36px;
+    transition: border-color 0.15s ease;
+    box-sizing: border-box;
+}
+
+.folder-git-commit-input:focus {
+    border-color: var(--fg-accent);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.15);
+}
+
+.folder-git-commit-input::placeholder {
+    color: var(--text-faint);
+}
+
+.folder-git-commit-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.folder-git-commit-btn,
+.folder-git-commit-all-btn {
+    flex: 1;
+    padding: 6px 12px;
+    border: none;
+    border-radius: var(--fg-radius);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.folder-git-commit-btn {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.folder-git-commit-btn:hover {
+    filter: brightness(1.1);
+}
+
+.folder-git-commit-all-btn {
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    border: 1px solid var(--fg-border);
+}
+
+.folder-git-commit-all-btn:hover {
+    background: var(--fg-hover);
+}
+
+.folder-git-btn-icon {
+    display: flex;
+    align-items: center;
+}
+
+.folder-git-btn-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* ── Sections ──────────────────────────────────────────────────────────────── */
+.folder-git-section {
+    border-bottom: 1px solid var(--fg-border);
+}
+
+.folder-git-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--background-secondary);
+    cursor: default;
+}
+
+.folder-git-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+}
+
+.folder-git-section-actions {
+    display: flex;
+    gap: 2px;
+}
+
+/* ── File List ─────────────────────────────────────────────────────────────── */
+.folder-git-file-list {
+    padding: 2px 0;
+}
+
+.folder-git-file-item {
+    display: flex;
+    align-items: center;
+    padding: 3px 12px;
+    gap: 8px;
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+
+.folder-git-file-item:hover {
+    background: var(--fg-hover);
+}
+
+.folder-git-file-item:hover .folder-git-file-actions {
+    opacity: 1;
+}
+
+/* ── Status Badges ─────────────────────────────────────────────────────────── */
+.folder-git-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.folder-git-status-M {
+    color: var(--fg-orange);
+    background: rgba(210, 153, 34, 0.12);
+}
+
+.folder-git-status-A {
+    color: var(--fg-green);
+    background: rgba(46, 160, 67, 0.12);
+}
+
+.folder-git-status-D {
+    color: var(--fg-red);
+    background: rgba(248, 81, 73, 0.12);
+}
+
+.folder-git-status-R {
+    color: var(--fg-blue);
+    background: rgba(88, 166, 255, 0.12);
+}
+
+.folder-git-status-U {
+    color: var(--fg-yellow);
+    background: rgba(227, 179, 65, 0.12);
+}
+
+.folder-git-status-\? {
+    color: var(--fg-dimmed);
+    background: var(--background-secondary);
+}
+
+/* ── File Name ─────────────────────────────────────────────────────────────── */
+.folder-git-file-name {
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+}
+
+.folder-git-file-basename {
+    color: var(--text-normal);
+}
+
+.folder-git-file-dir {
+    color: var(--text-faint);
+    font-size: 11px;
+}
+
+/* ── File Actions ──────────────────────────────────────────────────────────── */
+.folder-git-file-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+/* ── Loading / Empty / Error ───────────────────────────────────────────────── */
+.folder-git-loading {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.folder-git-empty-state {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.folder-git-empty-state p {
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+.folder-git-add-repo-btn {
+    padding: 8px 16px;
+    border-radius: var(--fg-radius);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: filter 0.15s ease;
+}
+
+.folder-git-add-repo-btn:hover {
+    filter: brightness(1.1);
+}
+
+.folder-git-error {
+    padding: 12px;
+    margin: 8px 12px;
+    border-radius: var(--fg-radius);
+    background: rgba(248, 81, 73, 0.1);
+    color: var(--fg-red);
+    font-size: 12px;
+    border: 1px solid rgba(248, 81, 73, 0.2);
+}
+
+.folder-git-no-changes {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
+.folder-git-conflicted .folder-git-section-header {
+    background: rgba(248, 81, 73, 0.08);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   History View
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-commit-list {
+    padding: 4px 0;
+}
+
+.folder-git-commit-item {
+    border-bottom: 1px solid var(--fg-border);
+}
+
+.folder-git-commit-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.1s ease;
+    flex-wrap: wrap;
+}
+
+.folder-git-commit-row:hover {
+    background: var(--fg-hover);
+}
+
+.folder-git-commit-expand {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.folder-git-commit-expand svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-commit-hash {
+    font-family: var(--font-monospace);
+    font-size: 11px;
+    color: var(--fg-blue);
+    flex-shrink: 0;
+    background: rgba(88, 166, 255, 0.08);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.folder-git-commit-message {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-normal);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.folder-git-commit-meta {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.folder-git-commit-author {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.folder-git-commit-date {
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+.folder-git-commit-files {
+    padding: 4px 12px 8px 40px;
+    animation: folder-git-slide-down 0.15s ease;
+}
+
+.folder-git-commit-file-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    transition: background 0.1s ease;
+}
+
+.folder-git-commit-file-item:hover {
+    background: var(--fg-hover);
+}
+
+.folder-git-commit-file-icon {
+    display: flex;
+    align-items: center;
+    color: var(--text-faint);
+}
+
+.folder-git-commit-file-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-commit-file-name {
+    font-family: var(--font-monospace);
+    font-size: 11px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Diff Modal
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-diff-modal {
+    max-width: 800px;
+    width: 90vw;
+}
+
+.folder-git-diff-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--fg-border);
+}
+
+.folder-git-diff-header h3 {
+    margin: 0;
+    font-family: var(--font-monospace);
+    font-size: 14px;
+    color: var(--text-normal);
+}
+
+.folder-git-diff-container {
+    overflow-x: auto;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.folder-git-diff-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-monospace);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.folder-git-diff-table tr {
+    border: none;
+}
+
+.folder-git-diff-table td {
+    padding: 0 8px;
+    white-space: pre;
+    border: none;
+}
+
+.folder-git-diff-line-num {
+    width: 40px;
+    min-width: 40px;
+    text-align: right;
+    color: var(--text-faint);
+    user-select: none;
+    padding-right: 8px;
+    border-right: 1px solid var(--fg-border);
+    font-size: 11px;
+}
+
+.folder-git-diff-line-content {
+    padding-left: 12px;
+}
+
+.folder-git-diff-added {
+    background: rgba(46, 160, 67, 0.1);
+}
+
+.folder-git-diff-added .folder-git-diff-line-content {
+    color: var(--fg-green);
+}
+
+.folder-git-diff-removed {
+    background: rgba(248, 81, 73, 0.1);
+}
+
+.folder-git-diff-removed .folder-git-diff-line-content {
+    color: var(--fg-red);
+}
+
+.folder-git-diff-context {
+    background: transparent;
+}
+
+.folder-git-diff-hunk {
+    background: rgba(88, 166, 255, 0.06);
+}
+
+.folder-git-diff-hunk .folder-git-diff-line-content {
+    color: var(--fg-blue);
+    font-style: italic;
+}
+
+.folder-git-diff-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Add Repo Modal
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-add-repo-modal {
+    max-width: 550px;
+}
+
+.folder-git-add-repo-modal h2 {
+    margin-bottom: 16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Settings
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-settings-repo {
+    margin: 12px 0;
+    padding: 12px;
+    border: 1px solid var(--fg-border);
+    border-radius: var(--fg-radius);
+    background: var(--background-secondary);
+}
+
+.folder-git-settings-repo-header h4 {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Animations
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes folder-git-slide-down {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

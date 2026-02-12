@@ -1,0 +1,9 @@
+{
+    "id": "obsidian-folder-git",
+    "name": "Folder Git",
+    "version": "1.0.0",
+    "minAppVersion": "1.0.0",
+    "description": "Per-folder Git source control — manage separate Git repositories for each folder in your vault, VS Code style.",
+    "author": "octadira",
+    "isDesktopOnly": true
+}

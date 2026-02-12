@@ -1,0 +1,29 @@
+{
+    "name": "obsidian-folder-git",
+    "version": "1.0.0",
+    "description": "Per-folder Git source control for Obsidian",
+    "main": "main.js",
+    "scripts": {
+        "dev": "node esbuild.config.mjs",
+        "build": "node esbuild.config.mjs production"
+    },
+    "keywords": [
+        "obsidian",
+        "git",
+        "source-control",
+        "version-control"
+    ],
+    "author": "octadira",
+    "license": "MIT",
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "esbuild": "^0.20.0",
+        "obsidian": "latest",
+        "typescript": "^5.3.0",
+        "tslib": "^2.6.0",
+        "builtin-modules": "^3.3.0"
+    },
+    "dependencies": {
+        "simple-git": "^3.22.0"
+    }
+}
