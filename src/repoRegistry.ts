@@ -1,5 +1,6 @@
-import simpleGit, { type SimpleGit } from "simple-git";
+import simpleGit from "simple-git";
 import { FileSystemAdapter, Notice } from "obsidian";
+import * as fs from "fs";
 import type {
     FolderRepoConfig,
     RepoInstance,
@@ -260,16 +261,30 @@ export class RepoRegistry {
         const log = await instance.git.log({
             maxCount: limit,
             "--stat": null,
-        } as any);
+        });
 
-        return log.all.map((entry) => ({
-            hash: entry.hash,
-            hashShort: entry.hash.substring(0, 7),
-            message: entry.message,
-            author: entry.author_name,
-            date: entry.date,
-            files: (entry as any).diff?.files?.map((f: any) => f.file) || [],
-        }));
+        interface DiffLogEntry {
+            hash: string;
+            date: string;
+            message: string;
+            author_name: string;
+            author_email: string;
+            diff?: {
+                files: { file: string }[];
+            };
+        }
+
+        return log.all.map((entry) => {
+            const diffEntry = entry as unknown as DiffLogEntry;
+            return {
+                hash: diffEntry.hash,
+                hashShort: diffEntry.hash.substring(0, 7),
+                message: diffEntry.message,
+                author: diffEntry.author_name,
+                date: diffEntry.date,
+                files: diffEntry.diff?.files?.map((f) => f.file) || [],
+            };
+        });
     }
 
     /** Get current branch name */
@@ -386,9 +401,15 @@ export class RepoRegistry {
         if (!remoteUrl.startsWith("https://")) return; // SSH — leave it alone
 
         // Write credentials to a private file in .obsidian
-        const credPath = `${this.vaultBasePath}/.obsidian/plugins/obsidian-folder-git/.git-credentials`;
-        const fs = require("fs");
+        // Use configDir to support custom configuration folders
+        const configDir = this.plugin.app.vault.configDir;
+        const credPath = `${this.vaultBasePath}/${configDir}/plugins/obsidian-folder-git/.git-credentials`;
         const credLine = `https://${username}:${token}@github.com\n`;
+        // Ensure directory exists
+        const credDir = credPath.substring(0, credPath.lastIndexOf("/"));
+        if (!fs.existsSync(credDir)) {
+            fs.mkdirSync(credDir, { recursive: true });
+        }
         fs.writeFileSync(credPath, credLine, { mode: 0o600 });
 
         // Configure this repo to use credential-store pointing to our file
@@ -438,7 +459,6 @@ export class RepoRegistry {
         if (!instance) return false;
 
         const gitignorePath = `${instance.absolutePath}/.gitignore`;
-        const fs = require("fs");
 
         if (!fs.existsSync(gitignorePath)) return false;
 
@@ -465,18 +485,17 @@ export class RepoRegistry {
             // basic check:
             await instance.git.raw(["check-ignore", "-q", relativePath]);
             return true;
-        } catch (e) {
+        } catch {
             return false;
         }
     }
 
     /** Add a path to .gitignore */
-    async addToGitignore(folderPath: string, relativePath: string): Promise<void> {
+    addToGitignore(folderPath: string, relativePath: string): void {
         const instance = this.repos.get(folderPath);
         if (!instance) throw new Error(`No repo for "${folderPath}"`);
 
         const gitignorePath = `${instance.absolutePath}/.gitignore`;
-        const fs = require("fs");
 
         // Append to .gitignore
         // Ensure we start on a new line
@@ -493,12 +512,11 @@ export class RepoRegistry {
     }
 
     /** Remove a path from .gitignore */
-    async removeFromGitignore(folderPath: string, relativePath: string): Promise<void> {
+    removeFromGitignore(folderPath: string, relativePath: string): void {
         const instance = this.repos.get(folderPath);
         if (!instance) throw new Error(`No repo for "${folderPath}"`);
 
         const gitignorePath = `${instance.absolutePath}/.gitignore`;
-        const fs = require("fs");
 
         if (!fs.existsSync(gitignorePath)) return;
 

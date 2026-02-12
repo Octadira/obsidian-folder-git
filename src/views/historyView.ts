@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type FolderGitPlugin from "../main";
 import { HISTORY_VIEW_TYPE, type GitLogEntry } from "../types";
 
@@ -18,7 +18,7 @@ export class HistoryView extends ItemView {
     }
 
     getDisplayText(): string {
-        return "Git History";
+        return "Git history";
     }
 
     getIcon(): string {
@@ -89,10 +89,12 @@ export class HistoryView extends ItemView {
                 if (p === this.activeRepo) opt.selected = true;
             }
 
-            select.addEventListener("change", async () => {
-                this.activeRepo = select.value;
-                this.expandedCommits.clear();
-                await this.loadAndRender();
+            select.addEventListener("change", () => {
+                (async () => {
+                    this.activeRepo = select.value;
+                    this.expandedCommits.clear();
+                    await this.loadAndRender();
+                })();
             });
         }
 
@@ -103,7 +105,11 @@ export class HistoryView extends ItemView {
             attr: { "aria-label": "Refresh" },
         });
         setIcon(refreshBtn, "refresh-cw");
-        refreshBtn.addEventListener("click", () => this.loadAndRender());
+        refreshBtn.addEventListener("click", () => {
+            (async () => {
+                await this.loadAndRender();
+            })();
+        });
     }
 
     private renderCommitItem(container: HTMLElement, entry: GitLogEntry): void {
@@ -139,12 +145,14 @@ export class HistoryView extends ItemView {
 
         // Toggle expand on click
         row.addEventListener("click", () => {
-            if (this.expandedCommits.has(entry.hash)) {
-                this.expandedCommits.delete(entry.hash);
-            } else {
-                this.expandedCommits.add(entry.hash);
-            }
-            this.loadAndRender();
+            (async () => {
+                if (this.expandedCommits.has(entry.hash)) {
+                    this.expandedCommits.delete(entry.hash);
+                } else {
+                    this.expandedCommits.add(entry.hash);
+                }
+                await this.loadAndRender();
+            })();
         });
 
         // Expanded: show files

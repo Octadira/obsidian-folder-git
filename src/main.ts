@@ -1,4 +1,5 @@
-import { Plugin, WorkspaceLeaf, TFolder, TAbstractFile, Menu, Notice } from "obsidian";
+import { Plugin, TFolder, TAbstractFile, Menu, Notice, TFile } from "obsidian";
+import * as fs from "fs";
 import {
     type PluginSettings,
     type RepoStatus,
@@ -22,7 +23,6 @@ export default class FolderGitPlugin extends Plugin {
     private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
     async onload(): Promise<void> {
-        console.log("Folder Git: Loading plugin...");
 
         // Load settings
         await this.loadSettings();
@@ -36,7 +36,7 @@ export default class FolderGitPlugin extends Plugin {
         this.registerView(HISTORY_VIEW_TYPE, (leaf) => new HistoryView(leaf, this));
 
         // Ribbon icon
-        this.ribbonIconEl = this.addRibbonIcon("git-branch", "Folder Git: Source Control", () => {
+        this.ribbonIconEl = this.addRibbonIcon("git-branch", "Folder Git: source control", () => {
             this.activateSourceControlView();
         });
         this.ribbonIconEl.addClass("folder-git-ribbon-icon");
@@ -44,19 +44,19 @@ export default class FolderGitPlugin extends Plugin {
         // Commands
         this.addCommand({
             id: "open-source-control",
-            name: "Open Source Control",
+            name: "Open source control",
             callback: () => this.activateSourceControlView(),
         });
 
         this.addCommand({
             id: "open-history",
-            name: "Open Git History",
+            name: "Open Git history",
             callback: () => this.activateHistoryView(),
         });
 
         this.addCommand({
             id: "add-folder-repo",
-            name: "Add Folder Repository",
+            name: "Add folder repository",
             callback: () => this.openAddRepoModal(),
         });
 
@@ -137,7 +137,7 @@ export default class FolderGitPlugin extends Plugin {
                     if (isRepoRoot) {
                         menu.addItem((item) =>
                             item
-                                .setTitle("Git: Open Source Control")
+                                .setTitle("Git: open source control")
                                 .setIcon("git-branch")
                                 .onClick(async () => {
                                     await this.activateSourceControlView();
@@ -150,7 +150,7 @@ export default class FolderGitPlugin extends Plugin {
 
                         menu.addItem((item) =>
                             item
-                                .setTitle("Git: Open History")
+                                .setTitle("Git: open history")
                                 .setIcon("history")
                                 .onClick(async () => {
                                     await this.activateHistoryView();
@@ -163,7 +163,7 @@ export default class FolderGitPlugin extends Plugin {
 
                         menu.addItem((item) =>
                             item
-                                .setTitle("Git: Edit .gitignore")
+                                .setTitle("Git: open .gitignore")
                                 .setIcon("file-code")
                                 .onClick(() => this.openGitignoreFile(folderPath))
                         );
@@ -195,10 +195,10 @@ export default class FolderGitPlugin extends Plugin {
                     if (isIgnored) {
                         menu.addItem((item) =>
                             item
-                                .setTitle("Git: Remove from .gitignore")
+                                .setTitle("Git: remove from .gitignore")
                                 .setIcon("trash")
                                 .onClick(async () => {
-                                    await this.repoRegistry.removeFromGitignore(repo.config.folderPath, relativePath);
+                                    this.repoRegistry.removeFromGitignore(repo.config.folderPath, relativePath);
                                     new Notice(`Removed "${relativePath}" from .gitignore`);
                                     await this.updateBadge(); // Refresh status
                                 })
@@ -206,12 +206,21 @@ export default class FolderGitPlugin extends Plugin {
                     } else {
                         menu.addItem((item) =>
                             item
-                                .setTitle("Git: Add to .gitignore")
+                                .setTitle("Git: add to .gitignore")
                                 .setIcon("eye-off")
                                 .onClick(async () => {
-                                    await this.repoRegistry.addToGitignore(repo.config.folderPath, relativePath);
+                                    this.repoRegistry.addToGitignore(repo.config.folderPath, relativePath);
                                     new Notice(`Added "${relativePath}" to .gitignore`);
                                     await this.updateBadge(); // Refresh status
+                                })
+                        );
+                        menu.addItem((item) =>
+                            item
+                                .setTitle("Git: pull")
+                                .setIcon("download")
+                                .onClick(async () => {
+                                    await this.repoRegistry.pull(repo.config.folderPath);
+                                    new Notice(`Pulled changes for ${repo.config.folderPath}`);
                                 })
                         );
                     }
@@ -220,7 +229,7 @@ export default class FolderGitPlugin extends Plugin {
                     if (file instanceof TFolder) {
                         menu.addItem((item) =>
                             item
-                                .setTitle("Git: Add Repository")
+                                .setTitle("Git: add repository")
                                 .setIcon("git-branch")
                                 .onClick(() => this.openAddRepoModal(folderPath))
                         );
@@ -237,12 +246,9 @@ export default class FolderGitPlugin extends Plugin {
 
         // Initial badge update (after a short delay to allow repos to init)
         setTimeout(() => this.updateBadge(), 2000);
-
-        console.log("Folder Git: Plugin loaded.");
     }
 
     onunload(): void {
-        console.log("Folder Git: Unloading plugin...");
         this.stopRefreshTimer();
         this.repoRegistry?.destroy();
     }
@@ -408,7 +414,6 @@ export default class FolderGitPlugin extends Plugin {
 
         // Ensure file exists
         const absPath = `${repo.absolutePath}/.gitignore`;
-        const fs = require("fs");
         if (!fs.existsSync(absPath)) {
             fs.writeFileSync(absPath, "");
         }
@@ -442,10 +447,10 @@ export default class FolderGitPlugin extends Plugin {
             file = this.app.vault.getAbstractFileByPath(gitignorePath);
         }
 
-        if (file && file instanceof TFolder === false) { // it's a file
-            await this.app.workspace.getLeaf(true).openFile(file as any);
+        if (file && file instanceof TFile) { // it's a file
+            await this.app.workspace.getLeaf(true).openFile(file);
         } else {
-            new Notice("Could not open .gitignore. Is 'Detect all file extensions' enabled?");
+            new Notice("Could not open .gitignore. Is 'detect all file extensions' enabled?");
         }
     }
 }

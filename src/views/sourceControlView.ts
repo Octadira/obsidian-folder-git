@@ -27,7 +27,7 @@ export class SourceControlView extends ItemView {
     }
 
     getDisplayText(): string {
-        return "Source Control";
+        return "Source control";
     }
 
     getIcon(): string {
@@ -171,9 +171,11 @@ export class SourceControlView extends ItemView {
                     countBadge.setText(String(changeCount));
                 }
 
-                repoItem.addEventListener("click", async () => {
-                    this.activeRepo = p;
-                    await this.render();
+                repoItem.addEventListener("click", () => {
+                    (async () => {
+                        this.activeRepo = p;
+                        await this.render();
+                    })();
                 });
             }
         }
@@ -246,7 +248,7 @@ export class SourceControlView extends ItemView {
         // Stage All + Commit button
         const commitAllBtn = commitActions.createEl("button", {
             cls: "folder-git-commit-all-btn",
-            text: "Commit All",
+            text: "Commit all",
         });
         commitAllBtn.addEventListener("click", () => this.commitAll());
     }
@@ -272,7 +274,7 @@ export class SourceControlView extends ItemView {
             // Unstage all
             const unstageAllBtn = sectionActions.createEl("button", {
                 cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Unstage All" },
+                attr: { "aria-label": "Unstage all" },
             });
             setIcon(unstageAllBtn, "minus");
             unstageAllBtn.addEventListener("click", () => this.unstageAllFiles());
@@ -280,7 +282,7 @@ export class SourceControlView extends ItemView {
             // Stage all
             const stageAllBtn = sectionActions.createEl("button", {
                 cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Stage All" },
+                attr: { "aria-label": "Stage all" },
             });
             setIcon(stageAllBtn, "plus");
             stageAllBtn.addEventListener("click", () => this.stageAllFiles());
@@ -323,7 +325,7 @@ export class SourceControlView extends ItemView {
         // View diff
         const diffBtn = itemActions.createEl("button", {
             cls: "folder-git-icon-btn",
-            attr: { "aria-label": "View Diff" },
+            attr: { "aria-label": "View diff" },
         });
         setIcon(diffBtn, "file-diff");
         diffBtn.addEventListener("click", (e) => {
@@ -357,7 +359,7 @@ export class SourceControlView extends ItemView {
             // Discard
             const discardBtn = itemActions.createEl("button", {
                 cls: "folder-git-icon-btn folder-git-discard-btn",
-                attr: { "aria-label": "Discard Changes" },
+                attr: { "aria-label": "Discard changes" },
             });
             setIcon(discardBtn, "undo");
             discardBtn.addEventListener("click", (e) => {
@@ -389,7 +391,7 @@ export class SourceControlView extends ItemView {
         const sectionActions = sectionHeader.createDiv("folder-git-section-actions");
         const stageAllBtn = sectionActions.createEl("button", {
             cls: "folder-git-icon-btn",
-            attr: { "aria-label": "Stage All Untracked" },
+            attr: { "aria-label": "Stage all untracked" },
         });
         setIcon(stageAllBtn, "plus");
         stageAllBtn.addEventListener("click", () => this.stageAllFiles());
@@ -418,14 +420,16 @@ export class SourceControlView extends ItemView {
                 ? filePath.replace(this.activeRepo + "/", "")
                 : filePath;
 
-            stageBtn.addEventListener("click", async (e) => {
+            stageBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                try {
-                    await this.plugin.repoRegistry.stage(this.activeRepo, [repoRelativePath]);
-                    await this.refresh();
-                } catch (err) {
-                    new Notice(`Failed to stage: ${(err as Error).message}`);
-                }
+                (async () => {
+                    try {
+                        await this.plugin.repoRegistry.stage(this.activeRepo, [repoRelativePath]);
+                        await this.refresh();
+                    } catch (err) {
+                        new Notice(`Failed to stage: ${(err as Error).message}`);
+                    }
+                })();
             });
 
             // Context menu for untracked files
@@ -466,7 +470,7 @@ export class SourceControlView extends ItemView {
 
         const addBtn = empty.createEl("button", {
             cls: "folder-git-add-repo-btn",
-            text: "Add Folder Repository",
+            text: "Add folder repository",
         });
         addBtn.addEventListener("click", () => {
             this.plugin.openAddRepoModal();
@@ -625,7 +629,7 @@ export class SourceControlView extends ItemView {
 
         menu.addItem((item) =>
             item
-                .setTitle("View Diff")
+                .setTitle("View diff")
                 .setIcon("file-diff")
                 .onClick(() => this.openDiff(file, isStaged))
         );
@@ -633,7 +637,7 @@ export class SourceControlView extends ItemView {
         if (isStaged) {
             menu.addItem((item) =>
                 item
-                    .setTitle("Unstage")
+                    .setTitle("Unstage file")
                     .setIcon("minus")
                     .onClick(() => this.unstageFile(file))
             );
@@ -641,7 +645,7 @@ export class SourceControlView extends ItemView {
             // Stage
             menu.addItem((item) =>
                 item
-                    .setTitle("Stage")
+                    .setTitle("Stage file")
                     .setIcon("plus")
                     .onClick(() => this.stageFile(file))
             );
@@ -653,14 +657,16 @@ export class SourceControlView extends ItemView {
                     item
                         .setTitle("Add to .gitignore")
                         .setIcon("eye-off")
-                        .onClick(async () => {
-                            try {
-                                await this.plugin.repoRegistry.addToGitignore(this.activeRepo, file.path);
-                                new Notice(`Added "${file.path}" to .gitignore`);
-                                await this.refresh();
-                            } catch (e) {
-                                new Notice(`Failed to add to .gitignore: ${(e as Error).message}`);
-                            }
+                        .onClick(() => {
+                            (async () => {
+                                try {
+                                    this.plugin.repoRegistry.addToGitignore(this.activeRepo, file.path);
+                                    new Notice(`Added "${file.path}" to .gitignore`);
+                                    await this.refresh();
+                                } catch (e) {
+                                    new Notice(`Failed to add to .gitignore: ${(e as Error).message}`);
+                                }
+                            })();
                         })
                 );
             }
@@ -670,7 +676,7 @@ export class SourceControlView extends ItemView {
             if (file.displayStatus !== "?") {
                 menu.addItem((item) =>
                     item
-                        .setTitle("Discard Changes")
+                        .setTitle("Discard changes")
                         .setIcon("undo")
                         .onClick(() => this.discardFile(file))
                 );
@@ -679,8 +685,8 @@ export class SourceControlView extends ItemView {
 
         menu.addItem((item) =>
             item
-                .setTitle("Open File")
-                .setIcon("file")
+                .setTitle("Open file")
+                .setIcon("file-text")
                 .onClick(() => {
                     const tFile = this.app.vault.getAbstractFileByPath(file.vaultPath);
                     if (tFile) {

@@ -17,108 +17,125 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
         // ── Global Settings ──────────────────────────────────────────────
 
-        containerEl.createEl("h2", { text: "Folder Git Settings" });
+        // ── Global Settings ──────────────────────────────────────────────
+
 
         new Setting(containerEl)
-            .setName("Git Binary Path")
+            .setName("Git binary path")
             .setDesc("Custom path to Git executable. Leave empty to use system default.")
             .addText((text) =>
                 text
-                    .setPlaceholder("/usr/bin/git")
+                    .setPlaceholder("/usr/bin/Git")
                     .setValue(this.plugin.settings.gitBinaryPath)
-                    .onChange(async (value) => {
-                        this.plugin.settings.gitBinaryPath = value;
-                        await this.plugin.saveSettings();
+                    .onChange((value) => {
+                        (async () => {
+                            this.plugin.settings.gitBinaryPath = value;
+                            await this.plugin.saveSettings();
+                        })();
                     })
             );
 
         new Setting(containerEl)
-            .setName("Show Untracked Files")
-            .setDesc("Display untracked files in the Source Control view.")
+            .setName("Show untracked files")
+            .setDesc("Display untracked files in the source control view.")
             .addToggle((toggle) =>
                 toggle
                     .setValue(this.plugin.settings.showUntrackedFiles)
-                    .onChange(async (value) => {
-                        this.plugin.settings.showUntrackedFiles = value;
-                        await this.plugin.saveSettings();
+                    .onChange((value) => {
+                        (async () => {
+                            this.plugin.settings.showUntrackedFiles = value;
+                            await this.plugin.saveSettings();
+                        })();
                     })
             );
 
         new Setting(containerEl)
-            .setName("Status Refresh Interval")
+            .setName("Status refresh interval")
             .setDesc("How often to refresh Git status (in seconds). Set to 0 to disable auto-refresh.")
             .addText((text) =>
                 text
                     .setPlaceholder("30")
                     .setValue(String(this.plugin.settings.refreshInterval))
-                    .onChange(async (value) => {
-                        const num = parseInt(value, 10);
-                        if (!isNaN(num) && num >= 0) {
-                            this.plugin.settings.refreshInterval = num;
-                            await this.plugin.saveSettings();
-                            this.plugin.restartRefreshTimer();
-                        }
+                    .onChange((value) => {
+                        (async () => {
+                            const num = parseInt(value, 10);
+                            if (!isNaN(num) && num >= 0) {
+                                this.plugin.settings.refreshInterval = num;
+                                await this.plugin.saveSettings();
+                                this.plugin.restartRefreshTimer();
+                            }
+                        })();
                     })
             );
 
         // ── GitHub Authentication ────────────────────────────────────────
 
-        containerEl.createEl("h3", { text: "GitHub Authentication" });
+        new Setting(containerEl).setName("GitHub authentication").setHeading();
+
+        new Setting(containerEl)
+            .setName("GitHub username")
+            .setDesc("Auto-detected from token.")
+            .addText((text) =>
+                text
+                    .setPlaceholder("Username")
+                    .setValue(this.plugin.settings.githubUsername)
+                    .setDisabled(true) // Username is auto-detected, not manually set
+            );
 
         const tokenSetting = new Setting(containerEl)
-            .setName("Personal Access Token")
-            .setDesc(
-                this.plugin.settings.githubUsername
-                    ? `✅ Authenticated as ${this.plugin.settings.githubUsername}`
-                    : "Enter a GitHub PAT with 'repo' scope to enable GitHub integration."
-            );
+            .setName("Personal access token")
+            .setDesc("Generate a PAT with 'repo' scope.");
 
         tokenSetting.addText((text) => {
             text.inputEl.type = "password";
-            text.inputEl.style.width = "250px";
+            text.inputEl.setCssProps({ width: "250px" });
             text
-                .setPlaceholder("ghp_xxxxxxxxxxxx")
+                .setPlaceholder("Ghp_xxxxxxxxxxxx")
                 .setValue(this.plugin.settings.githubToken)
-                .onChange(async (value) => {
-                    this.plugin.settings.githubToken = value.trim();
-                    await this.plugin.saveSettings();
+                .onChange((value) => {
+                    (async () => {
+                        this.plugin.settings.githubToken = value.trim();
+                        await this.plugin.saveSettings();
+                    })();
                 });
         });
 
         tokenSetting.addButton((btn) => {
             btn.setButtonText("Validate")
                 .setCta()
-                .onClick(async () => {
-                    const token = this.plugin.settings.githubToken;
-                    if (!token) {
-                        new Notice("Please enter a GitHub token first.");
-                        return;
-                    }
-                    try {
-                        btn.setButtonText("Checking...");
-                        btn.setDisabled(true);
-                        const gh = new GitHubService(token);
-                        const user = await gh.validateToken();
-                        this.plugin.settings.githubUsername = user.login;
-                        await this.plugin.saveSettings();
-                        new Notice(`✅ Authenticated as ${user.login}`);
-                        this.display(); // Refresh to show username
-                    } catch {
-                        this.plugin.settings.githubUsername = "";
-                        await this.plugin.saveSettings();
-                        new Notice("❌ Invalid token. Please check and try again.");
-                        this.display();
-                    }
+                .onClick(() => {
+                    (async () => {
+                        const token = this.plugin.settings.githubToken;
+                        if (!token) {
+                            new Notice("Please enter a GitHub token first.");
+                            return;
+                        }
+                        try {
+                            btn.setButtonText("Checking...");
+                            btn.setDisabled(true);
+                            const gh = new GitHubService(token);
+                            const user = await gh.validateToken();
+                            this.plugin.settings.githubUsername = user.login;
+                            await this.plugin.saveSettings();
+                            new Notice(`✅ Authenticated as ${user.login}`);
+                            this.display(); // Refresh to show username
+                        } catch {
+                            this.plugin.settings.githubUsername = "";
+                            await this.plugin.saveSettings();
+                            new Notice("❌ invalid token. Please check and try again.");
+                            this.display();
+                        }
+                    })();
                 });
         });
 
         // ── Repository List ──────────────────────────────────────────────
 
-        containerEl.createEl("h3", { text: "Configured Repositories" });
+        new Setting(containerEl).setName("Configured repositories").setHeading();
 
         if (this.plugin.settings.repos.length === 0) {
             containerEl.createEl("p", {
-                text: 'No repositories configured. Use the "Add Folder Repository" command or button in the Source Control view.',
+                text: 'No repositories configured. Use the "add folder repository" command or button in the source control view.',
                 cls: "setting-item-description",
             });
         }
@@ -129,7 +146,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
         // Add repo button
         new Setting(containerEl).addButton((btn) => {
-            btn.setButtonText("Add Folder Repository")
+            btn.setButtonText("Add folder repository")
                 .setCta()
                 .onClick(() => {
                     this.plugin.openAddRepoModal();
@@ -143,7 +160,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
         // Repo header with folder path
         const header = section.createDiv("folder-git-settings-repo-header");
-        header.createEl("h4", { text: `📁 ${repo.folderPath || "(vault root)"}` });
+        new Setting(header).setName(`📁 ${repo.folderPath || "(vault root)"}`).setHeading();
 
         // Remote URL
         new Setting(section)
@@ -152,9 +169,11 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                 text
                     .setValue(repo.remoteUrl)
                     .setPlaceholder("git@github.com:user/repo.git")
-                    .onChange(async (value) => {
-                        repo.remoteUrl = value;
-                        await this.plugin.saveSettings();
+                    .onChange((value) => {
+                        (async () => {
+                            repo.remoteUrl = value;
+                            await this.plugin.saveSettings();
+                        })();
                     })
             );
 
@@ -162,9 +181,11 @@ export class FolderGitSettingsTab extends PluginSettingTab {
         new Setting(section)
             .setName("Auto-push after commit")
             .addToggle((toggle) =>
-                toggle.setValue(repo.autoPush).onChange(async (value) => {
-                    repo.autoPush = value;
-                    await this.plugin.saveSettings();
+                toggle.setValue(repo.autoPush).onChange((value) => {
+                    (async () => {
+                        repo.autoPush = value;
+                        await this.plugin.saveSettings();
+                    })();
                 })
             );
 
@@ -176,11 +197,13 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                 text
                     .setValue(String(repo.autoCommitInterval))
                     .setPlaceholder("0")
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         const num = parseInt(value, 10);
                         if (!isNaN(num) && num >= 0) {
-                            repo.autoCommitInterval = num;
-                            await this.plugin.saveSettings();
+                            (async () => {
+                                repo.autoCommitInterval = num;
+                                await this.plugin.saveSettings();
+                            })();
                         }
                     })
             );
@@ -193,9 +216,11 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                 text
                     .setValue(repo.commitMessageTemplate)
                     .setPlaceholder("vault backup: {{date}}")
-                    .onChange(async (value) => {
-                        repo.commitMessageTemplate = value;
-                        await this.plugin.saveSettings();
+                    .onChange((value) => {
+                        (async () => {
+                            repo.commitMessageTemplate = value;
+                            await this.plugin.saveSettings();
+                        })();
                     })
             );
 
@@ -203,14 +228,16 @@ export class FolderGitSettingsTab extends PluginSettingTab {
         new Setting(section).addButton((btn) => {
             btn.setButtonText("Remove")
                 .setWarning()
-                .onClick(async () => {
-                    this.plugin.repoRegistry.removeRepo(repo.folderPath);
-                    this.plugin.settings.repos = this.plugin.settings.repos.filter(
-                        (r: FolderRepoConfig) => r.folderPath !== repo.folderPath
-                    );
-                    await this.plugin.saveSettings();
-                    new Notice(`Removed repo for "${repo.folderPath || "vault root"}"`);
-                    this.display();
+                .onClick(() => {
+                    (async () => {
+                        this.plugin.repoRegistry.removeRepo(repo.folderPath);
+                        this.plugin.settings.repos = this.plugin.settings.repos.filter(
+                            (r: FolderRepoConfig) => r.folderPath !== repo.folderPath
+                        );
+                        await this.plugin.saveSettings();
+                        new Notice(`Removed repo for "${repo.folderPath || "vault root"}"`);
+                        this.display();
+                    })();
                 });
         });
     }

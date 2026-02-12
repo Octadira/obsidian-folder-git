@@ -37,10 +37,10 @@ export class AddRepoModal extends Modal {
         }
     }
 
-    async onOpen(): Promise<void> {
+    onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.createEl("h2", { text: "Add Folder Repository" });
+        new Setting(contentEl).setName("Add folder repository").setHeading();
 
         // Folder selector
         new Setting(contentEl)
@@ -95,7 +95,7 @@ export class AddRepoModal extends Modal {
         if (this.mode !== "clone") {
             const remoteSetting = new Setting(contentEl)
                 .setName("Remote URL")
-                .setDesc("Optional. Will be auto-filled if creating a GitHub repo.");
+                .setDesc("Optional. Will be auto-filled if creating a GitHub repository.");
 
             remoteSetting.addText((text) =>
                 text
@@ -118,7 +118,7 @@ export class AddRepoModal extends Modal {
                 .setName("Create GitHub repository")
                 .setDesc(
                     hasToken
-                        ? `Will create repo under ${this.plugin.settings.githubUsername}'s account.`
+                        ? `Will create repository under ${this.plugin.settings.githubUsername}'s account.`
                         : "⚠️ Configure GitHub token in settings first."
                 )
                 .addToggle((toggle) => {
@@ -137,15 +137,15 @@ export class AddRepoModal extends Modal {
                     .addText((text) =>
                         text
                             .setValue(this.githubRepoName)
-                            .setPlaceholder("my-repo")
+                            .setPlaceholder("My-repo")
                             .onChange((value) => (this.githubRepoName = value.trim()))
                     );
 
                 new Setting(contentEl)
                     .setName("Visibility")
                     .addDropdown((dropdown) => {
-                        dropdown.addOption("private", "🔒 Private");
-                        dropdown.addOption("public", "🌐 Public");
+                        dropdown.addOption("private", "🔒 private");
+                        dropdown.addOption("public", "🌐 public");
                         dropdown.setValue(this.isPrivate ? "private" : "public");
                         dropdown.onChange((value) => {
                             this.isPrivate = value === "private";
@@ -156,7 +156,7 @@ export class AddRepoModal extends Modal {
 
         // Add button
         new Setting(contentEl).addButton((btn) => {
-            btn.setButtonText("Add Repository")
+            btn.setButtonText("Add repository")
                 .setCta()
                 .onClick(() => this.handleAdd());
         });
@@ -191,9 +191,11 @@ export class AddRepoModal extends Modal {
                         text: `ℹ️ Detected remote: ${origin.name} → ${origin.fetchUrl}`,
                         cls: "setting-item-description",
                     });
-                    info.style.color = "var(--text-success)";
-                    info.style.marginTop = "-8px";
-                    info.style.marginBottom = "12px";
+                    info.setCssProps({
+                        color: "var(--text-success)",
+                        marginTop: "-8px",
+                        marginBottom: "12px",
+                    });
                 }
             }
         } catch {
@@ -209,7 +211,7 @@ export class AddRepoModal extends Modal {
                 if (child instanceof TFolder) {
                     if (
                         child.name.startsWith(".") &&
-                        (child.name === ".obsidian" || child.name === ".git")
+                        (child.name === this.app.vault.configDir || child.name === ".git")
                     ) {
                         continue;
                     }
@@ -224,7 +226,7 @@ export class AddRepoModal extends Modal {
             if (child instanceof TFolder) {
                 if (
                     child.name.startsWith(".") &&
-                    (child.name === ".obsidian" || child.name === ".git")
+                    (child.name === this.app.vault.configDir || child.name === ".git")
                 ) {
                     continue;
                 }
