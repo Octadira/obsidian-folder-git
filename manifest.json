@@ -1,7 +1,7 @@
 {
     "id": "folder-git",
     "name": "Folder Git",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "minAppVersion": "1.0.0",
     "description": "Per-folder Git source control — manage separate Git repositories for each folder in your vault.",
     "author": "octadira",
