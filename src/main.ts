@@ -37,7 +37,7 @@ export default class FolderGitPlugin extends Plugin {
 
         // Ribbon icon
         this.ribbonIconEl = this.addRibbonIcon("git-branch", "Folder Git: source control", () => {
-            this.activateSourceControlView();
+            void this.activateSourceControlView();
         });
         this.ribbonIconEl.addClass("folder-git-ribbon-icon");
 
@@ -45,13 +45,13 @@ export default class FolderGitPlugin extends Plugin {
         this.addCommand({
             id: "open-source-control",
             name: "Open source control",
-            callback: () => this.activateSourceControlView(),
+            callback: () => { void this.activateSourceControlView(); },
         });
 
         this.addCommand({
             id: "open-history",
             name: "Open Git history",
-            callback: () => this.activateHistoryView(),
+            callback: () => { void this.activateHistoryView(); },
         });
 
         this.addCommand({
@@ -143,7 +143,7 @@ export default class FolderGitPlugin extends Plugin {
                                     await this.activateSourceControlView();
                                     const view = this.getSourceControlView();
                                     if (view) {
-                                        await (view as SourceControlView).setActiveRepo(folderPath);
+                                        await view.setActiveRepo(folderPath);
                                     }
                                 })
                         );
@@ -156,7 +156,7 @@ export default class FolderGitPlugin extends Plugin {
                                     await this.activateHistoryView();
                                     const view = this.getHistoryView();
                                     if (view) {
-                                        await (view as HistoryView).setActiveRepo(folderPath);
+                                        await view.setActiveRepo(folderPath);
                                     }
                                 })
                         );
@@ -245,7 +245,7 @@ export default class FolderGitPlugin extends Plugin {
         this.startRefreshTimer();
 
         // Initial badge update (after a short delay to allow repos to init)
-        setTimeout(() => this.updateBadge(), 2000);
+        setTimeout(() => { void this.updateBadge(); }, 2000);
     }
 
     onunload(): void {
@@ -268,7 +268,7 @@ export default class FolderGitPlugin extends Plugin {
     async activateSourceControlView(): Promise<void> {
         const existing = this.app.workspace.getLeavesOfType(SOURCE_CONTROL_VIEW_TYPE);
         if (existing.length > 0) {
-            this.app.workspace.revealLeaf(existing[0]);
+            await this.app.workspace.revealLeaf(existing[0]);
             return;
         }
 
@@ -278,14 +278,14 @@ export default class FolderGitPlugin extends Plugin {
                 type: SOURCE_CONTROL_VIEW_TYPE,
                 active: true,
             });
-            this.app.workspace.revealLeaf(leaf);
+            await this.app.workspace.revealLeaf(leaf);
         }
     }
 
     async activateHistoryView(): Promise<void> {
         const existing = this.app.workspace.getLeavesOfType(HISTORY_VIEW_TYPE);
         if (existing.length > 0) {
-            this.app.workspace.revealLeaf(existing[0]);
+            await this.app.workspace.revealLeaf(existing[0]);
             return;
         }
 
@@ -295,7 +295,7 @@ export default class FolderGitPlugin extends Plugin {
                 type: HISTORY_VIEW_TYPE,
                 active: true,
             });
-            this.app.workspace.revealLeaf(leaf);
+            await this.app.workspace.revealLeaf(leaf);
         }
     }
 
@@ -318,11 +318,11 @@ export default class FolderGitPlugin extends Plugin {
     // ─── Modals ─────────────────────────────────────────────────────────
 
     openAddRepoModal(initialFolderPath?: string): void {
-        new AddRepoModal(this.app, this, async () => {
+        new AddRepoModal(this.app, this, () => {
             // Refresh source control view after adding
             const view = this.getSourceControlView();
             if (view) {
-                await view.render();
+                void view.render();
             }
         }, initialFolderPath).open();
     }
@@ -336,12 +336,14 @@ export default class FolderGitPlugin extends Plugin {
     startRefreshTimer(): void {
         this.stopRefreshTimer();
         if (this.settings.refreshInterval > 0) {
-            this.refreshTimer = setInterval(async () => {
-                await this.updateBadge();
-                const view = this.getSourceControlView();
-                if (view) {
-                    await view.render();
-                }
+            this.refreshTimer = setInterval(() => {
+                void (async () => {
+                    await this.updateBadge();
+                    const view = this.getSourceControlView();
+                    if (view) {
+                        await view.render();
+                    }
+                })();
             }, this.settings.refreshInterval * 1000);
         }
     }

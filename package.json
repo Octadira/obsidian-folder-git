@@ -1,6 +1,6 @@
 {
     "name": "obsidian-folder-git",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Per-folder Git source control for Obsidian",
     "main": "main.js",
     "scripts": {

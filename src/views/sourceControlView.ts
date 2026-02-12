@@ -172,7 +172,7 @@ export class SourceControlView extends ItemView {
                 }
 
                 repoItem.addEventListener("click", () => {
-                    (async () => {
+                    void (async () => {
                         this.activeRepo = p;
                         await this.render();
                     })();
@@ -206,7 +206,7 @@ export class SourceControlView extends ItemView {
             attr: { "aria-label": "Refresh" },
         });
         setIcon(refreshBtn, "refresh-cw");
-        refreshBtn.addEventListener("click", () => this.refresh());
+        refreshBtn.addEventListener("click", () => { void this.refresh(); });
 
         // Pull button
         const pullBtn = actions.createEl("button", {
@@ -214,7 +214,7 @@ export class SourceControlView extends ItemView {
             attr: { "aria-label": "Pull" },
         });
         setIcon(pullBtn, "download");
-        pullBtn.addEventListener("click", () => this.pullRepo());
+        pullBtn.addEventListener("click", () => { void this.pullRepo(); });
 
         // Push button
         const pushBtn = actions.createEl("button", {
@@ -222,7 +222,7 @@ export class SourceControlView extends ItemView {
             attr: { "aria-label": "Push" },
         });
         setIcon(pushBtn, "upload");
-        pushBtn.addEventListener("click", () => this.pushRepo());
+        pushBtn.addEventListener("click", () => { void this.pushRepo(); });
     }
 
     // ─── Commit Area ────────────────────────────────────────────────────
@@ -243,14 +243,14 @@ export class SourceControlView extends ItemView {
             text: "Commit",
         });
         setIcon(commitBtn.createSpan({ cls: "folder-git-btn-icon" }), "check");
-        commitBtn.addEventListener("click", () => this.commitChanges());
+        commitBtn.addEventListener("click", () => { void this.commitChanges(); });
 
         // Stage All + Commit button
         const commitAllBtn = commitActions.createEl("button", {
             cls: "folder-git-commit-all-btn",
             text: "Commit all",
         });
-        commitAllBtn.addEventListener("click", () => this.commitAll());
+        commitAllBtn.addEventListener("click", () => { void this.commitAll(); });
     }
 
     // ─── File Sections ──────────────────────────────────────────────────
@@ -277,7 +277,7 @@ export class SourceControlView extends ItemView {
                 attr: { "aria-label": "Unstage all" },
             });
             setIcon(unstageAllBtn, "minus");
-            unstageAllBtn.addEventListener("click", () => this.unstageAllFiles());
+            unstageAllBtn.addEventListener("click", () => { void this.unstageAllFiles(); });
         } else {
             // Stage all
             const stageAllBtn = sectionActions.createEl("button", {
@@ -285,7 +285,7 @@ export class SourceControlView extends ItemView {
                 attr: { "aria-label": "Stage all" },
             });
             setIcon(stageAllBtn, "plus");
-            stageAllBtn.addEventListener("click", () => this.stageAllFiles());
+            stageAllBtn.addEventListener("click", () => { void this.stageAllFiles(); });
         }
 
         // File list
@@ -330,7 +330,7 @@ export class SourceControlView extends ItemView {
         setIcon(diffBtn, "file-diff");
         diffBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            this.openDiff(file, isStaged);
+            void this.openDiff(file, isStaged);
         });
 
         if (isStaged) {
@@ -342,7 +342,7 @@ export class SourceControlView extends ItemView {
             setIcon(unstageBtn, "minus");
             unstageBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                this.unstageFile(file);
+                void this.unstageFile(file);
             });
         } else {
             // Stage
@@ -353,7 +353,7 @@ export class SourceControlView extends ItemView {
             setIcon(stageBtn, "plus");
             stageBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                this.stageFile(file);
+                void this.stageFile(file);
             });
 
             // Discard
@@ -364,13 +364,13 @@ export class SourceControlView extends ItemView {
             setIcon(discardBtn, "undo");
             discardBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                this.discardFile(file);
+                void this.discardFile(file);
             });
         }
 
         // Click to open file
         item.addEventListener("click", () => {
-            this.openDiff(file, isStaged);
+            void this.openDiff(file, isStaged);
         });
 
         // Context menu
@@ -394,7 +394,7 @@ export class SourceControlView extends ItemView {
             attr: { "aria-label": "Stage all untracked" },
         });
         setIcon(stageAllBtn, "plus");
-        stageAllBtn.addEventListener("click", () => this.stageAllFiles());
+        stageAllBtn.addEventListener("click", () => { void this.stageAllFiles(); });
 
         const fileList = section.createDiv("folder-git-file-list");
         for (const filePath of files) {
@@ -422,7 +422,7 @@ export class SourceControlView extends ItemView {
 
             stageBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                (async () => {
+                void (async () => {
                     try {
                         await this.plugin.repoRegistry.stage(this.activeRepo, [repoRelativePath]);
                         await this.refresh();
@@ -658,7 +658,7 @@ export class SourceControlView extends ItemView {
                         .setTitle("Add to .gitignore")
                         .setIcon("eye-off")
                         .onClick(() => {
-                            (async () => {
+                            void (async () => {
                                 try {
                                     this.plugin.repoRegistry.addToGitignore(this.activeRepo, file.path);
                                     new Notice(`Added "${file.path}" to .gitignore`);
@@ -690,7 +690,7 @@ export class SourceControlView extends ItemView {
                 .onClick(() => {
                     const tFile = this.app.vault.getAbstractFileByPath(file.vaultPath);
                     if (tFile) {
-                        this.app.workspace.openLinkText(file.vaultPath, "", false);
+                        void this.app.workspace.openLinkText(file.vaultPath, "", false);
                     }
                 })
         );

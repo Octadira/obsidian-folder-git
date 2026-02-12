@@ -89,7 +89,7 @@ export class RepoRegistry {
         // Set up auto-commit timer if configured
         if (config.autoCommitInterval > 0) {
             instance.autoCommitTimer = setInterval(
-                () => this.autoCommit(config.folderPath),
+                () => { void this.autoCommit(config.folderPath); },
                 config.autoCommitInterval * 60 * 1000
             );
         }

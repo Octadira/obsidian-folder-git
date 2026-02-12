@@ -90,7 +90,7 @@ export class HistoryView extends ItemView {
             }
 
             select.addEventListener("change", () => {
-                (async () => {
+                void (async () => {
                     this.activeRepo = select.value;
                     this.expandedCommits.clear();
                     await this.loadAndRender();
@@ -106,7 +106,7 @@ export class HistoryView extends ItemView {
         });
         setIcon(refreshBtn, "refresh-cw");
         refreshBtn.addEventListener("click", () => {
-            (async () => {
+            void (async () => {
                 await this.loadAndRender();
             })();
         });
@@ -145,7 +145,7 @@ export class HistoryView extends ItemView {
 
         // Toggle expand on click
         row.addEventListener("click", () => {
-            (async () => {
+            void (async () => {
                 if (this.expandedCommits.has(entry.hash)) {
                     this.expandedCommits.delete(entry.hash);
                 } else {

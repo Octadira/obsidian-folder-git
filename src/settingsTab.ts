@@ -28,7 +28,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                     .setPlaceholder("/usr/bin/Git")
                     .setValue(this.plugin.settings.gitBinaryPath)
                     .onChange((value) => {
-                        (async () => {
+                        void (async () => {
                             this.plugin.settings.gitBinaryPath = value;
                             await this.plugin.saveSettings();
                         })();
@@ -42,7 +42,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                 toggle
                     .setValue(this.plugin.settings.showUntrackedFiles)
                     .onChange((value) => {
-                        (async () => {
+                        void (async () => {
                             this.plugin.settings.showUntrackedFiles = value;
                             await this.plugin.saveSettings();
                         })();
@@ -57,7 +57,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                     .setPlaceholder("30")
                     .setValue(String(this.plugin.settings.refreshInterval))
                     .onChange((value) => {
-                        (async () => {
+                        void (async () => {
                             const num = parseInt(value, 10);
                             if (!isNaN(num) && num >= 0) {
                                 this.plugin.settings.refreshInterval = num;
@@ -93,7 +93,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                 .setPlaceholder("Ghp_xxxxxxxxxxxx")
                 .setValue(this.plugin.settings.githubToken)
                 .onChange((value) => {
-                    (async () => {
+                    void (async () => {
                         this.plugin.settings.githubToken = value.trim();
                         await this.plugin.saveSettings();
                     })();
@@ -104,7 +104,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
             btn.setButtonText("Validate")
                 .setCta()
                 .onClick(() => {
-                    (async () => {
+                    void (async () => {
                         const token = this.plugin.settings.githubToken;
                         if (!token) {
                             new Notice("Please enter a GitHub token first.");
@@ -170,7 +170,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                     .setValue(repo.remoteUrl)
                     .setPlaceholder("git@github.com:user/repo.git")
                     .onChange((value) => {
-                        (async () => {
+                        void (async () => {
                             repo.remoteUrl = value;
                             await this.plugin.saveSettings();
                         })();
@@ -182,7 +182,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
             .setName("Auto-push after commit")
             .addToggle((toggle) =>
                 toggle.setValue(repo.autoPush).onChange((value) => {
-                    (async () => {
+                    void (async () => {
                         repo.autoPush = value;
                         await this.plugin.saveSettings();
                     })();
@@ -200,7 +200,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                     .onChange((value) => {
                         const num = parseInt(value, 10);
                         if (!isNaN(num) && num >= 0) {
-                            (async () => {
+                            void (async () => {
                                 repo.autoCommitInterval = num;
                                 await this.plugin.saveSettings();
                             })();
@@ -217,7 +217,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                     .setValue(repo.commitMessageTemplate)
                     .setPlaceholder("vault backup: {{date}}")
                     .onChange((value) => {
-                        (async () => {
+                        void (async () => {
                             repo.commitMessageTemplate = value;
                             await this.plugin.saveSettings();
                         })();
@@ -229,7 +229,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
             btn.setButtonText("Remove")
                 .setWarning()
                 .onClick(() => {
-                    (async () => {
+                    void (async () => {
                         this.plugin.repoRegistry.removeRepo(repo.folderPath);
                         this.plugin.settings.repos = this.plugin.settings.repos.filter(
                             (r: FolderRepoConfig) => r.folderPath !== repo.folderPath

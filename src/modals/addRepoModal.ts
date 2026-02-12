@@ -106,7 +106,7 @@ export class AddRepoModal extends Modal {
 
             // Show detected remote for existing repos
             if (this.mode === "existing" && this.folderPath !== undefined) {
-                this.detectAndShowRemote(contentEl);
+                void this.detectAndShowRemote(contentEl);
             }
         }
 
