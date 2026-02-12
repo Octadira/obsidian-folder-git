@@ -84,7 +84,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
         const tokenSetting = new Setting(containerEl)
             .setName("Personal access token")
-            .setDesc("Generate a PAT with 'repo' scope.");
+            .setDesc("Generate a personal access token with 'repo' scope.");
 
         tokenSetting.addText((text) => {
             text.inputEl.type = "password";
