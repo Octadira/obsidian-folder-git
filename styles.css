@@ -278,6 +278,31 @@
     color: var(--fg-red);
 }
 
+.folder-git-icon-btn:disabled,
+.folder-git-commit-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.folder-git-icon-btn:disabled:hover {
+    background: transparent;
+    color: var(--text-muted);
+}
+
+.folder-git-commit-btn:disabled:hover {
+    filter: none;
+}
+
+.folder-git-icon-btn.is-busy svg {
+    animation: folder-git-spin 1s linear infinite;
+}
+
+@keyframes folder-git-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* ── Commit Area ───────────────────────────────────────────────────────────── */
 .folder-git-commit-area {
     padding: 10px 12px;
@@ -447,8 +472,9 @@
     background: rgba(227, 179, 65, 0.12);
 }
 
-.folder-git-status-\? {
-    color: var(--fg-dimmed);
+.folder-git-status-\?,
+.folder-git-status-untracked {
+    color: var(--fg-green);
     background: var(--background-secondary);
 }
 
@@ -782,4 +808,20 @@
         opacity: 1;
         transform: translateY(0);
     }
+}
+/* ── Settings & Modals ─────────────────────────────────────────────────────── */
+.folder-git-token-input {
+    width: 250px;
+}
+
+.folder-git-detected-remote {
+    color: var(--text-success);
+}
+
+.folder-git-gitignore-input {
+    width: 100%;
+    min-height: 280px;
+    font-family: var(--font-monospace);
+    font-size: 12px;
+    resize: vertical;
 }

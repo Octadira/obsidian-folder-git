@@ -8,3 +8,6 @@ test-vault/
 coverage/
 npm-debug.log
 yarn-error.log
+
+# Plugin settings written by Obsidian when the repo is linked into a vault (contains tokens)
+data.json

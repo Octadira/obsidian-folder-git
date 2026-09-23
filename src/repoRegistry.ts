@@ -1,15 +1,25 @@
-import simpleGit from "simple-git";
+import simpleGit, { CheckRepoActions, type SimpleGit, type SimpleGitOptions } from "simple-git";
 import { FileSystemAdapter, Notice } from "obsidian";
 import * as fs from "fs";
-import type {
-    FolderRepoConfig,
-    RepoInstance,
-    RepoStatus,
-    FileStatusResult,
-    FileChangeType,
-    GitLogEntry,
-    FolderGitPluginInterface,
+import {
+    renderCommitMessage,
+    type FolderRepoConfig,
+    type RepoInstance,
+    type RepoStatus,
+    type FileStatusResult,
+    type FileChangeType,
+    type GitLogEntry,
+    type FolderGitPluginInterface,
 } from "./types";
+import { findAccountForRemote } from "./hosting/hostingService";
+
+/**
+ * Git credential helper that answers "get" requests from environment variables.
+ * The token is passed to the git child process via env only — it is never written
+ * to disk, to .git/config, or embedded in remote URLs.
+ */
+const ENV_CREDENTIAL_HELPER =
+    '!f() { test "$1" = get || return 0; echo "username=$FOLDER_GIT_USERNAME"; echo "password=$FOLDER_GIT_TOKEN"; }; f';
 
 /**
  * RepoRegistry: manages N SimpleGit instances, one per configured folder.
@@ -17,6 +27,8 @@ import type {
 export class RepoRegistry {
     private repos: Map<string, RepoInstance> = new Map();
     private plugin: FolderGitPluginInterface;
+    /** Per-repo promise chain so mutating/network operations never overlap */
+    private queues: Map<string, Promise<unknown>> = new Map();
 
     constructor(plugin: FolderGitPluginInterface) {
         this.plugin = plugin;
@@ -28,26 +40,73 @@ export class RepoRegistry {
     }
 
     /** Resolve a vault-relative folder path to an absolute path */
-    private resolveAbsolutePath(folderPath: string): string {
+    resolveAbsolutePath(folderPath: string): string {
         if (folderPath === "" || folderPath === "/") return this.vaultBasePath;
         return `${this.vaultBasePath}/${folderPath}`;
     }
 
-    /** Get the git binary configuration */
-    private get gitBinary(): string | undefined {
-        return this.plugin.settings.gitBinaryPath || undefined;
+    /** Base simple-git options honoring the custom binary setting */
+    private gitOptions(baseDir?: string): Partial<SimpleGitOptions> {
+        const binary = this.plugin.settings.gitBinaryPath.trim();
+        return {
+            baseDir,
+            binary: binary || undefined,
+            config: ["core.quotepath=off"],
+            // User-provided binary paths commonly contain spaces (e.g. "C:\Program Files\Git\...")
+            unsafe: binary ? { allowUnsafeCustomBinary: true } : undefined,
+        };
+    }
+
+    /**
+     * Create a short-lived git instance for network operations against `remoteUrl`.
+     * If a configured hosting account matches the remote host, credentials are
+     * supplied through an env-based credential helper.
+     */
+    private networkGit(baseDir: string | undefined, remoteUrl: string): SimpleGit {
+        const options = this.gitOptions(baseDir);
+        const env: Record<string, string | undefined> = {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0",
+        };
+
+        const account = findAccountForRemote(this.plugin.settings, remoteUrl);
+        if (account) {
+            // Empty value resets inherited helpers so ours is the only one consulted
+            options.config = [...(options.config ?? []), "credential.helper=", `credential.helper=${ENV_CREDENTIAL_HELPER}`];
+            env.FOLDER_GIT_USERNAME = account.username;
+            env.FOLDER_GIT_TOKEN = account.token;
+        }
+
+        return simpleGit(options).env(env);
+    }
+
+    /** Run `fn` after any pending operation on the same repo has finished */
+    private exclusive<T>(folderPath: string, fn: () => Promise<T>): Promise<T> {
+        const prev = this.queues.get(folderPath) ?? Promise.resolve();
+        const next = prev.catch(() => undefined).then(fn);
+        this.queues.set(folderPath, next);
+        void next.finally(() => {
+            if (this.queues.get(folderPath) === next) this.queues.delete(folderPath);
+        }).catch(() => undefined);
+        return next;
+    }
+
+    private require(folderPath: string): RepoInstance {
+        const instance = this.repos.get(folderPath);
+        if (!instance) throw new Error(`No repo configured for "${folderPath || "vault root"}"`);
+        return instance;
     }
 
     // ─── Lifecycle ─────────────────────────────────────────────────────────
 
     /** Initialize all configured repos on plugin load */
     async initialize(): Promise<void> {
+        this.removeLegacyCredentialFiles();
         for (const config of this.plugin.settings.repos) {
             try {
                 await this.addRepo(config);
             } catch (e) {
-                console.error(`Folder Git: Failed to init repo for ${config.folderPath}:`, e);
-                new Notice(`Folder Git: Failed to initialize repo for "${config.folderPath}"`);
+                new Notice(`Folder Git: failed to initialize repo for "${config.folderPath || "vault root"}": ${(e as Error).message}`);
             }
         }
     }
@@ -56,7 +115,7 @@ export class RepoRegistry {
     destroy(): void {
         for (const [, instance] of this.repos) {
             if (instance.autoCommitTimer) {
-                clearInterval(instance.autoCommitTimer);
+                window.clearInterval(instance.autoCommitTimer);
             }
         }
         this.repos.clear();
@@ -68,42 +127,53 @@ export class RepoRegistry {
     async addRepo(config: FolderRepoConfig): Promise<void> {
         const absolutePath = this.resolveAbsolutePath(config.folderPath);
 
-        const git = simpleGit({
-            baseDir: absolutePath,
-            binary: this.gitBinary,
-            config: ["core.quotepath=off"],
-        });
+        const git = simpleGit(this.gitOptions(absolutePath))
+            // Status refreshes must not take index.lock and collide with user operations
+            .env({ ...process.env, GIT_OPTIONAL_LOCKS: "0" });
 
-        // Verify this is actually a git repo
-        const isRepo = await git.checkIsRepo();
-        if (!isRepo) {
-            throw new Error(`"${config.folderPath}" is not a Git repository`);
+        // Verify this folder is itself a repository root (not just inside another one)
+        const isRoot = await git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
+        if (!isRoot) {
+            throw new Error(`"${config.folderPath || "vault root"}" is not a Git repository root`);
         }
+
+        const existing = this.repos.get(config.folderPath);
+        if (existing?.autoCommitTimer) window.clearInterval(existing.autoCommitTimer);
 
         const instance: RepoInstance = {
             config,
             git,
             absolutePath,
         };
-
-        // Set up auto-commit timer if configured
-        if (config.autoCommitInterval > 0) {
-            instance.autoCommitTimer = setInterval(
-                () => { void this.autoCommit(config.folderPath); },
-                config.autoCommitInterval * 60 * 1000
-            );
-        }
-
         this.repos.set(config.folderPath, instance);
+        this.updateAutoCommit(config.folderPath);
+
+        await this.removeLegacyCredentialConfig(git);
     }
 
     /** Remove a repo from tracking (does NOT delete the .git folder) */
     removeRepo(folderPath: string): void {
         const instance = this.repos.get(folderPath);
         if (instance?.autoCommitTimer) {
-            clearInterval(instance.autoCommitTimer);
+            window.clearInterval(instance.autoCommitTimer);
         }
         this.repos.delete(folderPath);
+    }
+
+    /** (Re)start the auto-commit timer after the interval setting changed */
+    updateAutoCommit(folderPath: string): void {
+        const instance = this.repos.get(folderPath);
+        if (!instance) return;
+        if (instance.autoCommitTimer) {
+            window.clearInterval(instance.autoCommitTimer);
+            instance.autoCommitTimer = undefined;
+        }
+        if (instance.config.autoCommitInterval > 0) {
+            instance.autoCommitTimer = window.setInterval(
+                () => { void this.autoCommit(folderPath); },
+                instance.config.autoCommitInterval * 60 * 1000
+            );
+        }
     }
 
     /** Get a repo instance by folder path */
@@ -142,8 +212,7 @@ export class RepoRegistry {
 
     /** Get full status for a repo */
     async getStatus(folderPath: string): Promise<RepoStatus> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo configured for "${folderPath}"`);
+        const instance = this.require(folderPath);
 
         const status = await instance.git.status();
 
@@ -161,7 +230,7 @@ export class RepoRegistry {
             }
 
             // Conflicted
-            if (file.working_dir === "U" || file.index === "U") {
+            if (file.working_dir === "U" || file.index === "U" || status.conflicted.includes(file.path)) {
                 conflicted.push(vaultPath);
                 continue;
             }
@@ -192,6 +261,7 @@ export class RepoRegistry {
         return {
             folderPath,
             branch: status.current || "HEAD",
+            tracking: status.tracking || "",
             staged,
             changed,
             untracked,
@@ -203,60 +273,87 @@ export class RepoRegistry {
 
     /** Stage files in a repo */
     async stage(folderPath: string, files: string[]): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.add(files);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => instance.git.add(files));
     }
 
     /** Stage all files in a repo */
     async stageAll(folderPath: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.add(".");
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => instance.git.add(["-A", "."]));
     }
 
-    /** Unstage files in a repo */
+    /** Unstage files in a repo (works before the first commit too) */
     async unstage(folderPath: string, files: string[]): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.reset(["HEAD", "--", ...files]);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            if (await this.hasCommits(instance.git)) {
+                await instance.git.reset(["HEAD", "--", ...files]);
+            } else {
+                await instance.git.raw(["rm", "--cached", "-r", "-q", "--", ...files]);
+            }
+        });
     }
 
-    /** Unstage all files in a repo */
+    /** Unstage all files in a repo (works before the first commit too) */
     async unstageAll(folderPath: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.reset(["HEAD"]);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            if (await this.hasCommits(instance.git)) {
+                await instance.git.reset(["HEAD"]);
+            } else {
+                await instance.git.raw(["rm", "--cached", "-r", "-q", "."]);
+            }
+        });
     }
 
-    /** Discard changes for a file (checkout from HEAD) */
+    /** Discard working tree changes for a file (checkout from index) */
     async discard(folderPath: string, file: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.checkout(["--", file]);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => instance.git.checkout(["--", file]));
     }
 
     /** Commit staged changes */
     async commit(folderPath: string, message: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.commit(message);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            const status = await instance.git.status();
+            if (!status.files.some((f) => f.index && f.index !== " " && f.index !== "?")) {
+                throw new Error("Nothing staged to commit.");
+            }
+            await instance.git.commit(message);
+        });
     }
 
+    /** Stage everything and commit */
+    async commitAll(folderPath: string, message: string): Promise<boolean> {
+        const instance = this.require(folderPath);
+        return this.exclusive(folderPath, async () => {
+            await instance.git.add(["-A", "."]);
+            const status = await instance.git.status();
+            if (status.isClean()) return false;
+            await instance.git.commit(message);
+            return true;
+        });
+    }
 
-    /** Get diff for a specific file (working tree vs HEAD) */
+    /** Get diff for a specific file (working tree vs index, or index vs HEAD) */
     async getDiff(folderPath: string, file: string, staged: boolean = false): Promise<string> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-
+        const instance = this.require(folderPath);
         const args = staged ? ["--cached", "--", file] : ["--", file];
         return await instance.git.diff(args);
     }
 
+    /** Get the diff introduced by a single file in a commit */
+    async getCommitFileDiff(folderPath: string, hash: string, file: string): Promise<string> {
+        const instance = this.require(folderPath);
+        return await instance.git.show(["--format=", hash, "--", file]);
+    }
+
     /** Get commit log */
     async getLog(folderPath: string, limit: number = 50): Promise<GitLogEntry[]> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const instance = this.require(folderPath);
+        if (!(await this.hasCommits(instance.git))) return [];
 
         const log = await instance.git.log({
             maxCount: limit,
@@ -289,16 +386,14 @@ export class RepoRegistry {
 
     /** Get current branch name */
     async getBranch(folderPath: string): Promise<string> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const instance = this.require(folderPath);
         const status = await instance.git.status();
         return status.current || "HEAD";
     }
 
     /** Get all branches */
     async getBranches(folderPath: string): Promise<{ current: string; all: string[] }> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const instance = this.require(folderPath);
         const branches = await instance.git.branchLocal();
         return {
             current: branches.current,
@@ -308,44 +403,46 @@ export class RepoRegistry {
 
     /** Checkout a branch */
     async checkout(folderPath: string, branch: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.checkout(branch);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => instance.git.checkout(branch));
     }
 
     /** Init a new git repo in a folder */
     async initRepo(absolutePath: string): Promise<void> {
-        const git = simpleGit({
-            baseDir: absolutePath,
-            binary: this.gitBinary,
-        });
+        const git = simpleGit(this.gitOptions(absolutePath));
         await git.init();
     }
 
-    /** Clone a repo into a folder */
+    /** Clone a repo into a folder (uses configured hosting credentials when the host matches) */
     async cloneRepo(url: string, absolutePath: string): Promise<void> {
-        const git = simpleGit({
-            binary: this.gitBinary,
+        if (fs.existsSync(absolutePath) && fs.readdirSync(absolutePath).length > 0) {
+            throw new Error("Target folder is not empty. Choose an empty folder or a new subfolder name.");
+        }
+        await this.networkGit(undefined, url).clone(url, absolutePath);
+    }
+
+    /** Add a remote, or update its URL if it already exists */
+    async setRemoteUrl(folderPath: string, name: string, url: string): Promise<void> {
+        const instance = this.require(folderPath);
+        if (!url) return;
+        await this.exclusive(folderPath, async () => {
+            const remotes = await instance.git.getRemotes();
+            if (remotes.some((r) => r.name === name)) {
+                await instance.git.remote(["set-url", name, url]);
+            } else {
+                await instance.git.addRemote(name, url);
+            }
         });
-        await git.clone(url, absolutePath);
     }
 
-    /** Add a remote to an existing repo */
-    async addRemote(folderPath: string, name: string, url: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
-        await instance.git.addRemote(name, url);
-    }
-
-    // ─── GitHub Integration ─────────────────────────────────────────────────
+    // ─── Remotes ────────────────────────────────────────────────────────────
 
     /**
      * Detect existing remotes for a repo (useful for cloned repos).
      * Returns array of { name, url } pairs.
      */
     async detectRemotes(folderPath: string): Promise<{ name: string; fetchUrl: string; pushUrl: string }[]> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const instance = this.require(folderPath);
 
         const remotes = await instance.git.getRemotes(true);
         return remotes.map((r) => ({
@@ -360,15 +457,10 @@ export class RepoRegistry {
      * Used by AddRepoModal for pre-filling settings.
      */
     async detectRemotesFromPath(absolutePath: string): Promise<{ name: string; fetchUrl: string }[]> {
-        const git = simpleGit({
-            baseDir: absolutePath,
-            binary: this.gitBinary,
-            config: ["core.quotepath=off"],
-        });
+        if (!fs.existsSync(`${absolutePath}/.git`)) return [];
+        const git = simpleGit(this.gitOptions(absolutePath));
 
         try {
-            const isRepo = await git.checkIsRepo();
-            if (!isRepo) return [];
             const remotes = await git.getRemotes(true);
             return remotes.map((r) => ({
                 name: r.name,
@@ -379,110 +471,160 @@ export class RepoRegistry {
         }
     }
 
-    /**
-     * Configure git credentials for HTTPS push/pull using credential-store.
-     * The PAT is written to a local .git-credentials file in the vault's .obsidian dir.
-     * This avoids embedding tokens in remote URLs.
-     */
-    async configureCredentials(folderPath: string): Promise<void> {
-        const token = this.plugin.settings.githubToken;
-        const username = this.plugin.settings.githubUsername;
-        if (!token || !username) return;
-
-        const instance = this.repos.get(folderPath);
-        if (!instance) return;
-
-        // Check if remote is HTTPS (don't touch SSH remotes)
+    /** URL of the repo's configured remote, or "" if it has none */
+    private async getRemoteUrl(instance: RepoInstance): Promise<string> {
+        const remoteName = instance.config.remoteName || "origin";
         const remotes = await instance.git.getRemotes(true);
-        const origin = remotes.find((r) => r.name === (instance.config.remoteName || "origin"));
-        if (!origin) return;
-
-        const remoteUrl = origin.refs.push || origin.refs.fetch || "";
-        if (!remoteUrl.startsWith("https://")) return; // SSH — leave it alone
-
-        // Write credentials to a private file in .obsidian
-        // Use configDir to support custom configuration folders
-        const configDir = this.plugin.app.vault.configDir;
-        const credPath = `${this.vaultBasePath}/${configDir}/plugins/obsidian-folder-git/.git-credentials`;
-        const credLine = `https://${username}:${token}@github.com\n`;
-        // Ensure directory exists
-        const credDir = credPath.substring(0, credPath.lastIndexOf("/"));
-        if (!fs.existsSync(credDir)) {
-            fs.mkdirSync(credDir, { recursive: true });
+        const remote = remotes.find((r) => r.name === remoteName);
+        if (!remote) {
+            throw new Error(`Remote "${remoteName}" is not configured. Set a remote URL in the plugin settings.`);
         }
-        fs.writeFileSync(credPath, credLine, { mode: 0o600 });
-
-        // Configure this repo to use credential-store pointing to our file
-        await instance.git.addConfig("credential.helper", `store --file="${credPath}"`, false, "local");
+        return remote.refs.push || remote.refs.fetch || "";
     }
 
     /** Push to remote, setting upstream on first push */
     async push(folderPath: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => this.pushUnlocked(instance));
+    }
 
-        // Ensure credentials are configured before push
-        await this.configureCredentials(folderPath);
+    private async pushUnlocked(instance: RepoInstance): Promise<void> {
+        if (!(await this.hasCommits(instance.git))) {
+            throw new Error("No commits yet — commit before pushing.");
+        }
 
-        // Check if upstream is configured
+        const remoteUrl = await this.getRemoteUrl(instance);
+        const net = this.networkGit(instance.absolutePath, remoteUrl);
         const status = await instance.git.status();
-        const tracking = status.tracking;
 
-        if (!tracking) {
+        if (!status.tracking) {
             // First push — set upstream
-            const branch = status.current || "main";
+            if (!status.current || status.detached) {
+                throw new Error("Cannot push from a detached HEAD.");
+            }
             const remoteName = instance.config.remoteName || "origin";
-            await instance.git.push(["-u", remoteName, branch]);
+            await net.push(["-u", remoteName, status.current]);
         } else {
-            await instance.git.push();
+            await net.push();
         }
     }
 
-    /** Pull from remote */
+    /** Pull from remote (sets upstream if the branch is not tracking yet) */
     async pull(folderPath: string): Promise<void> {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => this.pullUnlocked(instance));
+    }
 
-        // Ensure credentials are configured before pull
-        await this.configureCredentials(folderPath);
-        await instance.git.pull();
+    private async pullUnlocked(instance: RepoInstance): Promise<void> {
+        const remoteUrl = await this.getRemoteUrl(instance);
+        const net = this.networkGit(instance.absolutePath, remoteUrl);
+        const status = await instance.git.status();
+
+        if (status.tracking) {
+            await net.pull();
+            return;
+        }
+
+        if (!status.current || status.detached) {
+            throw new Error("Cannot pull into a detached HEAD.");
+        }
+        const remoteName = instance.config.remoteName || "origin";
+        await net.fetch(remoteName);
+        const remoteBranches = await instance.git.branch(["-r"]);
+        const remoteRef = `${remoteName}/${status.current}`;
+        if (!remoteBranches.all.includes(remoteRef)) {
+            throw new Error(`Remote branch "${remoteRef}" does not exist yet. Push first.`);
+        }
+        await net.pull(remoteName, status.current);
+        await instance.git.branch(["--set-upstream-to", remoteRef]);
+    }
+
+    /** Pull then push */
+    async sync(folderPath: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            const status = await instance.git.status();
+            if (status.tracking) {
+                await this.pullUnlocked(instance);
+            }
+            await this.pushUnlocked(instance);
+        });
+    }
+
+    /** Fetch from remote to refresh ahead/behind counters */
+    async fetch(folderPath: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            const remoteUrl = await this.getRemoteUrl(instance);
+            await this.networkGit(instance.absolutePath, remoteUrl).fetch(instance.config.remoteName || "origin");
+        });
+    }
+
+    // ─── Legacy credential cleanup ─────────────────────────────────────────
+
+    /**
+     * Versions ≤1.0.4 stored the PAT in a plaintext credential-store file and pointed
+     * the repo's local credential.helper at it. Remove that configuration.
+     */
+    private async removeLegacyCredentialConfig(git: SimpleGit): Promise<void> {
+        try {
+            await git.raw(["config", "--local", "--unset-all", "credential.helper", "folder-git.*\\.git-credentials"]);
+        } catch {
+            // Exit code 5 = nothing to unset
+        }
+    }
+
+    private removeLegacyCredentialFiles(): void {
+        const configDir = this.plugin.app.vault.configDir;
+        const candidates = [
+            `${this.vaultBasePath}/${configDir}/plugins/obsidian-folder-git/.git-credentials`,
+            `${this.vaultBasePath}/${configDir}/plugins/${this.plugin.manifest.id}/.git-credentials`,
+        ];
+        for (const file of candidates) {
+            try {
+                if (fs.existsSync(file)) fs.unlinkSync(file);
+            } catch {
+                // Ignore — best-effort cleanup
+            }
+        }
     }
 
     // ─── Gitignore Management ──────────────────────────────────────────────
+
+    private gitignorePath(folderPath: string): string {
+        return `${this.require(folderPath).absolutePath}/.gitignore`;
+    }
+
+    /** Read .gitignore contents ("" if missing) */
+    readGitignore(folderPath: string): string {
+        const p = this.gitignorePath(folderPath);
+        return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+    }
+
+    /** Overwrite .gitignore contents */
+    writeGitignore(folderPath: string, content: string): void {
+        const normalized = content.length > 0 && !content.endsWith("\n") ? content + "\n" : content;
+        fs.writeFileSync(this.gitignorePath(folderPath), normalized);
+    }
 
     /**
      * Check if a file is explicitly listed in .gitignore (Sync).
      * Used for context menu to decide whether to show Add/Remove.
      */
     checkExplicitlyIgnored(folderPath: string, relativePath: string): boolean {
-        const instance = this.repos.get(folderPath);
-        if (!instance) return false;
-
-        const gitignorePath = `${instance.absolutePath}/.gitignore`;
-
-        if (!fs.existsSync(gitignorePath)) return false;
-
-        const content = fs.readFileSync(gitignorePath, "utf8");
-        const lines = content.split(/\r?\n/);
-
-        return lines.some((line: string) => {
-            const trimmed = line.trim();
-            return trimmed === relativePath || trimmed === relativePath + "/";
-        });
+        if (!this.repos.has(folderPath)) return false;
+        return this.readGitignore(folderPath)
+            .split(/\r?\n/)
+            .some((line: string) => this.matchesEntry(line, relativePath));
     }
 
-    /**
-     * Check if a file is currently ignored by git.
-     * Use check-ignore command.
-     */
+    /** Check if a file is currently ignored by git (git check-ignore) */
     async checkIgnored(folderPath: string, relativePath: string): Promise<boolean> {
         const instance = this.repos.get(folderPath);
         if (!instance) return false;
 
         try {
-            // git check-ignore returns 0 exit code if ignored, 1 if not.
-            // simple-git throws error on non-zero exit code usually, but checks might return string.
-            // basic check:
+            // check-ignore exits 0 if ignored, 1 if not (simple-git throws on non-zero)
             await instance.git.raw(["check-ignore", "-q", relativePath]);
             return true;
         } catch {
@@ -490,46 +632,33 @@ export class RepoRegistry {
         }
     }
 
-    /** Add a path to .gitignore */
+    /** Add a path to .gitignore (no-op if already listed) */
     addToGitignore(folderPath: string, relativePath: string): void {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        if (this.checkExplicitlyIgnored(folderPath, relativePath)) return;
 
-        const gitignorePath = `${instance.absolutePath}/.gitignore`;
-
-        // Append to .gitignore
-        // Ensure we start on a new line
-        let content = "";
-        if (fs.existsSync(gitignorePath)) {
-            content = fs.readFileSync(gitignorePath, "utf8");
-            if (content.length > 0 && !content.endsWith("\n")) {
-                content += "\n";
-            }
+        let content = this.readGitignore(folderPath);
+        if (content.length > 0 && !content.endsWith("\n")) {
+            content += "\n";
         }
-
         content += `${relativePath}\n`;
-        fs.writeFileSync(gitignorePath, content);
+        this.writeGitignore(folderPath, content);
     }
 
     /** Remove a path from .gitignore */
     removeFromGitignore(folderPath: string, relativePath: string): void {
-        const instance = this.repos.get(folderPath);
-        if (!instance) throw new Error(`No repo for "${folderPath}"`);
+        const content = this.readGitignore(folderPath);
+        if (!content) return;
 
-        const gitignorePath = `${instance.absolutePath}/.gitignore`;
+        const newLines = content
+            .split(/\r?\n/)
+            .filter((line: string) => !this.matchesEntry(line, relativePath));
 
-        if (!fs.existsSync(gitignorePath)) return;
+        this.writeGitignore(folderPath, newLines.join("\n"));
+    }
 
-        let content = fs.readFileSync(gitignorePath, "utf8");
-        const lines = content.split(/\r?\n/);
-
-        // Remove lines that match exactly relativePath or relativePath/
-        const newLines = lines.filter((line: string) => {
-            const trimmed = line.trim();
-            return trimmed !== relativePath && trimmed !== relativePath + "/";
-        });
-
-        fs.writeFileSync(gitignorePath, newLines.join("\n"));
+    private matchesEntry(line: string, relativePath: string): boolean {
+        const trimmed = line.trim().replace(/^\//, "");
+        return trimmed === relativePath || trimmed === relativePath + "/";
     }
 
     // ─── Auto-commit ───────────────────────────────────────────────────────
@@ -539,25 +668,28 @@ export class RepoRegistry {
         if (!instance) return;
 
         try {
-            const status = await instance.git.status();
-            if (status.files.length === 0) return;
-
-            await instance.git.add(".");
-            const message = instance.config.commitMessageTemplate.replace(
-                "{{date}}",
-                new Date().toISOString()
+            const committed = await this.commitAll(
+                folderPath,
+                renderCommitMessage(instance.config.commitMessageTemplate)
             );
-            await instance.git.commit(message);
-
-            if (instance.config.autoPush) {
+            if (committed && instance.config.autoPush) {
                 await this.push(folderPath);
             }
         } catch (e) {
-            console.error(`Folder Git: Auto-commit failed for "${folderPath}":`, e);
+            new Notice(`Folder Git: auto-commit failed for "${folderPath || "vault root"}": ${(e as Error).message}`);
         }
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────
+
+    private async hasCommits(git: SimpleGit): Promise<boolean> {
+        try {
+            await git.raw(["rev-parse", "--verify", "-q", "HEAD"]);
+            return true;
+        } catch {
+            return false;
+        }
+    }
 
     private mapStatus(s: string): FileChangeType {
         switch (s) {
@@ -565,6 +697,7 @@ export class RepoRegistry {
             case "A": return "A";
             case "D": return "D";
             case "R": return "R";
+            case "C": return "A";
             case "?": return "?";
             case "U": return "U";
             default: return "M";

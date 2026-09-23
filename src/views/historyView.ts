@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, setIcon, Notice } from "obsidian";
 import type FolderGitPlugin from "../main";
 import { HISTORY_VIEW_TYPE, type GitLogEntry } from "../types";
 
@@ -48,6 +48,9 @@ export class HistoryView extends ItemView {
             container.createDiv("folder-git-empty-state").setText("No repositories configured.");
             return;
         }
+        if (!paths.includes(this.activeRepo)) {
+            this.activeRepo = paths[0];
+        }
 
         // Load log
         try {
@@ -75,6 +78,9 @@ export class HistoryView extends ItemView {
         const header = container.createDiv("folder-git-header");
 
         const paths = this.plugin.repoRegistry.getAllPaths();
+        if (paths.length > 0 && !paths.includes(this.activeRepo)) {
+            this.activeRepo = paths[0];
+        }
         if (paths.length > 0) {
             const selectorWrap = header.createDiv("folder-git-selector-wrap");
             const select = selectorWrap.createEl("select", {
@@ -160,10 +166,27 @@ export class HistoryView extends ItemView {
             const filesContainer = item.createDiv("folder-git-commit-files");
             for (const file of entry.files) {
                 const fileItem = filesContainer.createDiv("folder-git-commit-file-item");
+                fileItem.setAttr("aria-label", "View changes in this commit");
                 const fileIcon = fileItem.createSpan("folder-git-commit-file-icon");
-                setIcon(fileIcon, "file-text");
+                setIcon(fileIcon, "file-diff");
                 fileItem.createSpan({ text: file, cls: "folder-git-commit-file-name" });
+                fileItem.addEventListener("click", () => {
+                    void this.openCommitFileDiff(entry, file);
+                });
             }
+        }
+    }
+
+    private async openCommitFileDiff(entry: GitLogEntry, file: string): Promise<void> {
+        // `git log --stat` shows renames as "old => new"; diff the new path
+        const path = file.includes(" => ")
+            ? file.replace(/\{([^}]*) => ([^}]*)\}/, "$2").replace(/^.* => /, "")
+            : file;
+        try {
+            const diff = await this.plugin.repoRegistry.getCommitFileDiff(this.activeRepo, entry.hash, path);
+            this.plugin.openDiffModal(`${path} @ ${entry.hashShort}`, diff);
+        } catch (e) {
+            new Notice(`Failed to load diff: ${(e as Error).message}`);
         }
     }
 

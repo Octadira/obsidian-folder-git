@@ -1,11 +1,15 @@
-import obsidianmd from "eslint-plugin-obsidianmd";
 import tsparser from "@typescript-eslint/parser";
-import tseslint from "@typescript-eslint/eslint-plugin";
+import { defineConfig } from "eslint/config";
+import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 
-export default [
+export default defineConfig([
     {
-        files: ["**/*.ts", "**/*.tsx"],
+        ignores: ["main.js", "node_modules/**", "dist/**", "build/**", "*.js", "*.mjs", "package.json", "package-lock.json"],
+    },
+    ...obsidianmd.configs.recommended,
+    {
+        files: ["**/*.ts"],
         languageOptions: {
             parser: tsparser,
             parserOptions: {
@@ -15,22 +19,18 @@ export default [
             globals: {
                 ...globals.browser,
                 ...globals.node,
-                ...globals.es2021,
+                // Obsidian globals
+                activeWindow: "readonly",
+                activeDocument: "readonly",
             },
         },
-        plugins: {
-            "@typescript-eslint": tseslint,
-            "obsidianmd": obsidianmd,
-        },
         rules: {
-            ...obsidianmd.configs.recommended,
-            "obsidianmd/ui/sentence-case": ["error", { "brands": ["Folder Git", "Git", "GitHub", "PAT", "URL"], "allowAutoFix": true }],
-            "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
-            "@typescript-eslint/no-explicit-any": "warn",
+            "obsidianmd/ui/sentence-case": ["error", {
+                brands: ["Folder Git", "Git", "GitHub", "Forgejo", "Gitea", "Codeberg", "PAT", "URL", "HTTPS", "SSH", "Obsidian"],
+                allowAutoFix: true,
+            }],
+            "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
             "no-console": "error",
         },
     },
-    {
-        ignores: ["main.js", "node_modules/**", "dist/**", "build/**", "*.js", "*.mjs"],
-    }
-];
+]);

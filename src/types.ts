@@ -1,6 +1,7 @@
 import type { SimpleGit } from "simple-git";
 import type { Plugin } from "obsidian";
 import type { RepoRegistry } from "./repoRegistry";
+import type { HostingProviderId } from "./hosting/hostingService";
 
 // ─── Plugin Settings ────────────────────────────────────────────────────────
 
@@ -17,9 +18,11 @@ export interface FolderRepoConfig {
     autoCommitInterval: number;
     /** Default commit message template. {{date}} is replaced with ISO date */
     commitMessageTemplate: string;
-    /** GitHub repo name (if created via plugin) */
-    githubRepoName: string;
-    /** Whether the GitHub repo is private */
+    /** Hosting provider the remote repo was created on via the plugin ("" = none/unknown) */
+    hostingProvider: HostingProviderId | "";
+    /** Remote repo name on the hosting provider (if created via plugin) */
+    remoteRepoName: string;
+    /** Whether the remote repo is private */
     isPrivate: boolean;
 }
 
@@ -36,14 +39,27 @@ export interface PluginSettings {
     githubToken: string;
     /** GitHub username (auto-populated after token validation) */
     githubUsername: string;
+    /** Forgejo/Gitea instance URL, e.g. https://codeberg.org */
+    forgejoUrl: string;
+    /** Forgejo access token (stored locally in plugin data) */
+    forgejoToken: string;
+    /** Forgejo username (auto-populated after token validation) */
+    forgejoUsername: string;
 }
+
+export type RepoAction = "push" | "pull" | "sync" | "fetch";
 
 export interface FolderGitPluginInterface extends Plugin {
     settings: PluginSettings;
     repoRegistry: RepoRegistry;
+    saveSettings(): Promise<void>;
     getCachedStatuses(): Map<string, RepoStatus>;
-    openAddRepoModal(initialFolderPath?: string): void;
+    refreshViews(): Promise<void>;
+    runRepoAction(action: RepoAction, folderPath: string): Promise<boolean>;
+    openAddRepoModal(initialFolderPath?: string, onDone?: () => void): void;
     openDiffModal(filePath: string, diffContent: string): void;
+    openGitignoreFile(folderPath: string): void;
+    openHistory(folderPath: string): Promise<void>;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -53,6 +69,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     refreshInterval: 30,
     githubToken: "",
     githubUsername: "",
+    forgejoUrl: "",
+    forgejoToken: "",
+    forgejoUsername: "",
 };
 
 export const DEFAULT_REPO_CONFIG: Omit<FolderRepoConfig, "folderPath"> = {
@@ -61,9 +80,16 @@ export const DEFAULT_REPO_CONFIG: Omit<FolderRepoConfig, "folderPath"> = {
     autoPush: true,
     autoCommitInterval: 0,
     commitMessageTemplate: "vault backup: {{date}}",
-    githubRepoName: "",
+    hostingProvider: "",
+    remoteRepoName: "",
     isPrivate: true,
 };
+
+/** Replace template placeholders in a commit message */
+export function renderCommitMessage(template: string): string {
+    const msg = (template || DEFAULT_REPO_CONFIG.commitMessageTemplate).split("{{date}}").join(new Date().toISOString());
+    return msg.trim() || "vault backup";
+}
 
 // ─── Git Status Types ───────────────────────────────────────────────────────
 
@@ -87,6 +113,8 @@ export interface RepoStatus {
     folderPath: string;
     /** Current branch name */
     branch: string;
+    /** Upstream branch (e.g. "origin/main"), "" if not tracking */
+    tracking: string;
     /** Staged files (in index) */
     staged: FileStatusResult[];
     /** Modified/deleted files in working tree */
@@ -117,7 +145,8 @@ export interface RepoInstance {
     config: FolderRepoConfig;
     git: SimpleGit;
     absolutePath: string;
-    autoCommitTimer?: ReturnType<typeof setInterval>;
+    /** Interval id from window.setInterval (main window, lives as long as the app) */
+    autoCommitTimer?: number;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────

@@ -1,17 +1,25 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon, Menu } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, setIcon, Menu, Platform } from "obsidian";
 import {
     SOURCE_CONTROL_VIEW_TYPE,
+    renderCommitMessage,
+    type RepoAction,
     type RepoStatus,
     type FileStatusResult,
     type FolderGitPluginInterface,
 } from "../types";
+import { ConfirmModal } from "../modals/confirmModal";
 
 export class SourceControlView extends ItemView {
     plugin: FolderGitPluginInterface;
     private activeRepo: string = "";
     private status: RepoStatus | null = null;
+    private statusError: string | null = null;
     private commitInput: HTMLTextAreaElement | null = null;
-    private isLoading: boolean = false;
+    /** Commit message drafts per repo — survive auto-refresh re-renders */
+    private drafts: Map<string, string> = new Map();
+    /** Monotonic counter so overlapping renders never both write to the DOM */
+    private renderSeq = 0;
+    private busyAction: RepoAction | null = null;
 
     get currentFolderPath(): string {
         return this.activeRepo;
@@ -35,7 +43,6 @@ export class SourceControlView extends ItemView {
     }
 
     async onOpen(): Promise<void> {
-        // Set initial active repo
         const paths = this.plugin.repoRegistry.getAllPaths();
         if (paths.length > 0) {
             this.activeRepo = paths[0];
@@ -47,88 +54,102 @@ export class SourceControlView extends ItemView {
         // cleanup
     }
 
-    /** Full re-render */
+    /** Fetch status, then rebuild the DOM synchronously (no flicker, no interleaving) */
     async render(): Promise<void> {
-        const container = this.containerEl.children[1] as HTMLElement;
-        container.empty();
-        container.addClass("folder-git-source-control");
+        const seq = ++this.renderSeq;
+        const paths = this.plugin.repoRegistry.getAllPaths();
 
-        // Header area
-        this.renderHeader(container);
-
-        // Loading state
-        if (this.isLoading) {
-            const loadingEl = container.createDiv("folder-git-loading");
-            loadingEl.setText("Loading...");
-            return;
+        if (paths.length > 0 && !paths.includes(this.activeRepo)) {
+            this.activeRepo = paths[0];
         }
 
-        const paths = this.plugin.repoRegistry.getAllPaths();
+        let status: RepoStatus | null = null;
+        let error: string | null = null;
+        if (paths.length > 0) {
+            try {
+                status = await this.plugin.repoRegistry.getStatus(this.activeRepo);
+            } catch (e) {
+                error = (e as Error).message;
+            }
+        }
+
+        // A newer render started while we were waiting on git
+        if (seq !== this.renderSeq) return;
+
+        this.status = status;
+        this.statusError = error;
+        this.draw(paths);
+    }
+
+    private draw(paths: string[]): void {
+        const container = this.containerEl.children[1] as HTMLElement;
+
+        // Preserve commit input focus and cursor across re-renders
+        const hadFocus = !!this.commitInput && this.commitInput.ownerDocument.activeElement === this.commitInput;
+        const selStart = this.commitInput?.selectionStart ?? 0;
+        const selEnd = this.commitInput?.selectionEnd ?? 0;
+        const scrollTop = container.scrollTop;
+
+        container.empty();
+        container.addClass("folder-git-source-control");
+        this.commitInput = null;
+
+        this.renderHeader(container, paths);
 
         if (paths.length === 0) {
             this.renderEmptyState(container);
             return;
         }
 
-        // Ensure activeRepo points to a valid repo in the registry
-        if (!paths.includes(this.activeRepo)) {
-            this.activeRepo = paths[0];
-        }
-
-        // Fetch status
-        try {
-            this.status = await this.plugin.repoRegistry.getStatus(this.activeRepo);
-        } catch (e) {
-            const errorEl = container.createDiv("folder-git-error");
-            errorEl.setText(`Error: ${(e as Error).message}`);
+        if (this.statusError !== null) {
+            container.createDiv("folder-git-error").setText(`Error: ${this.statusError}`);
             return;
         }
 
         const status = this.status;
         if (!status) return;
 
-        // Commit area
         this.renderCommitArea(container);
 
-        // Staged changes
-        if (status.staged.length > 0) {
-            this.renderFileSection(container, "Staged Changes", status.staged, true);
-        }
-
-        // Working tree changes
-        if (status.changed.length > 0) {
-            this.renderFileSection(container, "Changes", status.changed, false);
-        }
-
-        // Untracked files
-        if (status.untracked.length > 0 && this.plugin.settings.showUntrackedFiles) {
-            this.renderUntrackedSection(container, status.untracked);
-        }
-
-        // Conflicted files
         if (status.conflicted.length > 0) {
             this.renderConflictedSection(container, status.conflicted);
         }
 
-        // No changes
+        if (status.staged.length > 0) {
+            this.renderFileSection(container, "Staged changes", status.staged, true);
+        }
+
+        if (status.changed.length > 0) {
+            this.renderFileSection(container, "Changes", status.changed, false);
+        }
+
+        if (status.untracked.length > 0 && this.plugin.settings.showUntrackedFiles) {
+            this.renderUntrackedSection(container, status.untracked);
+        }
+
         if (
             status.staged.length === 0 &&
             status.changed.length === 0 &&
             status.untracked.length === 0 &&
             status.conflicted.length === 0
         ) {
-            const noChanges = container.createDiv("folder-git-no-changes");
-            noChanges.setText("No changes detected.");
+            container.createDiv("folder-git-no-changes").setText("No changes detected.");
         }
+
+        if (hadFocus && this.commitInput) {
+            const input: HTMLTextAreaElement = this.commitInput;
+            input.focus();
+            input.setSelectionRange(selStart, selEnd);
+        }
+        container.scrollTop = scrollTop;
     }
 
     // ─── Header ─────────────────────────────────────────────────────────
 
-    private renderHeader(container: HTMLElement): void {
+    private renderHeader(container: HTMLElement, paths: string[]): void {
         const header = container.createDiv("folder-git-header");
 
         // Repo list with status indicators
-        const paths = this.plugin.repoRegistry.getAllPaths();
         if (paths.length > 0) {
             const repoListWrap = header.createDiv("folder-git-repo-list-wrap");
             const repoList = repoListWrap.createDiv("folder-git-repo-list");
@@ -139,53 +160,43 @@ export class SourceControlView extends ItemView {
                 const repoItem = repoList.createDiv("folder-git-repo-item");
                 if (p === this.activeRepo) repoItem.addClass("active");
 
-                // Get this repo's change count
-                const repoStatus = cachedStatuses.get(p);
+                // Prefer the fresh status for the active repo
+                const repoStatus = p === this.activeRepo && this.status ? this.status : cachedStatuses.get(p);
                 const changeCount = repoStatus
-                    ? repoStatus.staged.length + repoStatus.changed.length + repoStatus.untracked.length
+                    ? repoStatus.staged.length + repoStatus.changed.length + repoStatus.untracked.length + repoStatus.conflicted.length
                     : 0;
 
                 if (changeCount > 0) {
                     repoItem.addClass("has-changes");
                 }
 
-                // Status indicator dot
                 const indicator = repoItem.createSpan("folder-git-repo-indicator");
-                if (changeCount > 0) {
-                    indicator.addClass("folder-git-repo-indicator-changes");
-                } else {
-                    indicator.addClass("folder-git-repo-indicator-clean");
-                }
+                indicator.addClass(changeCount > 0 ? "folder-git-repo-indicator-changes" : "folder-git-repo-indicator-clean");
 
-                // Repo icon
                 const repoIcon = repoItem.createSpan("folder-git-repo-icon");
                 setIcon(repoIcon, "folder-git-2");
 
-                // Repo name
-                const repoName = repoItem.createSpan("folder-git-repo-name");
-                repoName.setText(p || "(vault root)");
+                repoItem.createSpan({ cls: "folder-git-repo-name", text: p || "(vault root)" });
 
-                // Change count badge
                 if (changeCount > 0) {
-                    const countBadge = repoItem.createSpan("folder-git-repo-change-count");
-                    countBadge.setText(String(changeCount));
+                    repoItem.createSpan({ cls: "folder-git-repo-change-count", text: String(changeCount) });
                 }
 
                 repoItem.addEventListener("click", () => {
-                    void (async () => {
-                        this.activeRepo = p;
-                        await this.render();
-                    })();
+                    void this.setActiveRepo(p);
                 });
             }
         }
 
-        // Branch badge + actions row
         const headerRow = header.createDiv("folder-git-header-row");
 
         // Branch badge
         if (this.status) {
             const branchBadge = headerRow.createDiv("folder-git-branch-badge");
+            branchBadge.setAttr(
+                "aria-label",
+                this.status.tracking ? `Tracking ${this.status.tracking}` : "No upstream branch — push to publish"
+            );
             const branchIcon = branchBadge.createSpan("folder-git-branch-icon");
             setIcon(branchIcon, "git-branch");
             branchBadge.createSpan({ text: this.status.branch });
@@ -194,66 +205,115 @@ export class SourceControlView extends ItemView {
                 const syncInfo = branchBadge.createSpan("folder-git-sync-info");
                 if (this.status.ahead > 0) syncInfo.createSpan({ text: `↑${this.status.ahead}` });
                 if (this.status.behind > 0) syncInfo.createSpan({ text: `↓${this.status.behind}` });
+            } else if (!this.status.tracking) {
+                branchBadge.createSpan({ cls: "folder-git-sync-info", text: "unpublished" });
             }
         }
 
-        // Action buttons
+        if (paths.length === 0) return;
+
         const actions = headerRow.createDiv("folder-git-header-actions");
 
-        // Refresh button
-        const refreshBtn = actions.createEl("button", {
-            cls: "folder-git-icon-btn",
-            attr: { "aria-label": "Refresh" },
-        });
-        setIcon(refreshBtn, "refresh-cw");
-        refreshBtn.addEventListener("click", () => { void this.refresh(); });
+        this.createIconButton(actions, "refresh-cw", "Refresh", () => { void this.refresh(); });
+        this.createActionButton(actions, "pull", "download", "Pull");
+        this.createActionButton(actions, "push", "upload", "Push");
+        this.createActionButton(actions, "sync", "refresh-ccw-dot", "Sync (pull then push)");
 
-        // Pull button
-        const pullBtn = actions.createEl("button", {
-            cls: "folder-git-icon-btn",
-            attr: { "aria-label": "Pull" },
+        this.createIconButton(actions, "more-horizontal", "More actions", (evt) => {
+            const menu = new Menu();
+            menu.addItem((item) =>
+                item.setTitle("Fetch").setIcon("cloud-download").onClick(() => this.runAction("fetch"))
+            );
+            menu.addItem((item) =>
+                item.setTitle("Open history").setIcon("history").onClick(() => this.plugin.openHistory(this.activeRepo))
+            );
+            menu.addItem((item) =>
+                item.setTitle("Edit .gitignore").setIcon("file-code").onClick(() => this.plugin.openGitignoreFile(this.activeRepo))
+            );
+            menu.addSeparator();
+            menu.addItem((item) =>
+                item.setTitle("Add folder repository").setIcon("plus").onClick(() => this.plugin.openAddRepoModal())
+            );
+            menu.showAtMouseEvent(evt);
         });
-        setIcon(pullBtn, "download");
-        pullBtn.addEventListener("click", () => { void this.pullRepo(); });
+    }
 
-        // Push button
-        const pushBtn = actions.createEl("button", {
+    private createIconButton(
+        parent: HTMLElement,
+        icon: string,
+        label: string,
+        onClick: (evt: MouseEvent) => void
+    ): HTMLButtonElement {
+        const btn = parent.createEl("button", {
             cls: "folder-git-icon-btn",
-            attr: { "aria-label": "Push" },
+            attr: { "aria-label": label },
         });
-        setIcon(pushBtn, "upload");
-        pushBtn.addEventListener("click", () => { void this.pushRepo(); });
+        setIcon(btn, icon);
+        btn.addEventListener("click", onClick);
+        return btn;
+    }
+
+    private createActionButton(parent: HTMLElement, action: RepoAction, icon: string, label: string): void {
+        const btn = this.createIconButton(parent, icon, label, () => { void this.runAction(action); });
+        if (this.busyAction) {
+            btn.disabled = true;
+            if (this.busyAction === action) btn.addClass("is-busy");
+        }
     }
 
     // ─── Commit Area ────────────────────────────────────────────────────
 
     private renderCommitArea(container: HTMLElement): void {
         const commitArea = container.createDiv("folder-git-commit-area");
+        const repo = this.plugin.repoRegistry.getRepo(this.activeRepo);
+        const modKey = Platform.isMacOS ? "Cmd" : "Ctrl";
 
-        this.commitInput = commitArea.createEl("textarea", {
+        const input = commitArea.createEl("textarea", {
             cls: "folder-git-commit-input",
-            attr: { placeholder: "Commit message...", rows: "3" },
+            attr: {
+                placeholder: `Message (${modKey}+Enter to commit). Empty uses: ${repo?.config.commitMessageTemplate || "template"}`,
+                rows: "3",
+            },
         });
+        input.value = this.drafts.get(this.activeRepo) ?? "";
+        input.addEventListener("input", () => {
+            this.drafts.set(this.activeRepo, input.value);
+        });
+        input.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter" && (evt.ctrlKey || evt.metaKey)) {
+                evt.preventDefault();
+                const hasStaged = (this.status?.staged.length ?? 0) > 0;
+                void (hasStaged ? this.commitChanges() : this.commitAll());
+            }
+        });
+        this.commitInput = input;
 
         const commitActions = commitArea.createDiv("folder-git-commit-actions");
 
-        // Commit button
         const commitBtn = commitActions.createEl("button", {
             cls: "folder-git-commit-btn",
             text: "Commit",
+            attr: { "aria-label": "Commit staged changes" },
         });
         setIcon(commitBtn.createSpan({ cls: "folder-git-btn-icon" }), "check");
+        commitBtn.disabled = (this.status?.staged.length ?? 0) === 0;
         commitBtn.addEventListener("click", () => { void this.commitChanges(); });
 
-        // Stage All + Commit button
         const commitAllBtn = commitActions.createEl("button", {
             cls: "folder-git-commit-all-btn",
             text: "Commit all",
+            attr: { "aria-label": "Stage all changes and commit" },
         });
         commitAllBtn.addEventListener("click", () => { void this.commitAll(); });
     }
 
     // ─── File Sections ──────────────────────────────────────────────────
+
+    private renderSectionHeader(section: HTMLElement, title: string, count: number): HTMLElement {
+        const sectionHeader = section.createDiv("folder-git-section-header");
+        sectionHeader.createSpan({ cls: "folder-git-section-title", text: `${title} (${count})` });
+        return sectionHeader.createDiv("folder-git-section-actions");
+    }
 
     private renderFileSection(
         container: HTMLElement,
@@ -262,37 +322,36 @@ export class SourceControlView extends ItemView {
         isStaged: boolean
     ): void {
         const section = container.createDiv("folder-git-section");
-
-        const sectionHeader = section.createDiv("folder-git-section-header");
-        const titleEl = sectionHeader.createSpan("folder-git-section-title");
-        titleEl.setText(`${title} (${files.length})`);
-
-        // Section actions
-        const sectionActions = sectionHeader.createDiv("folder-git-section-actions");
+        const sectionActions = this.renderSectionHeader(section, title, files.length);
 
         if (isStaged) {
-            // Unstage all
-            const unstageAllBtn = sectionActions.createEl("button", {
-                cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Unstage all" },
-            });
-            setIcon(unstageAllBtn, "minus");
-            unstageAllBtn.addEventListener("click", () => { void this.unstageAllFiles(); });
+            this.createIconButton(sectionActions, "minus", "Unstage all", () => { void this.unstageAllFiles(); });
         } else {
-            // Stage all
-            const stageAllBtn = sectionActions.createEl("button", {
-                cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Stage all" },
+            this.createIconButton(sectionActions, "undo", "Discard all changes", () => {
+                void this.discardFiles(files);
+            }).addClass("folder-git-discard-btn");
+            this.createIconButton(sectionActions, "plus", "Stage all changes", () => {
+                void this.stagePaths(files.map((f) => f.path), "stage");
             });
-            setIcon(stageAllBtn, "plus");
-            stageAllBtn.addEventListener("click", () => { void this.stageAllFiles(); });
         }
 
-        // File list
         const fileList = section.createDiv("folder-git-file-list");
         for (const file of files) {
             this.renderFileItem(fileList, file, isStaged);
         }
+    }
+
+    private renderFileName(item: HTMLElement, path: string): void {
+        const fileName = item.createSpan("folder-git-file-name");
+        const parts = path.replace(/\/$/, "").split("/");
+        const baseName = parts.pop() || path;
+        const dirPath = parts.join("/");
+
+        fileName.createSpan({ text: baseName + (path.endsWith("/") ? "/" : ""), cls: "folder-git-file-basename" });
+        if (dirPath) {
+            fileName.createSpan({ text: ` ${dirPath}`, cls: "folder-git-file-dir" });
+        }
+        item.setAttr("aria-label", path);
     }
 
     private renderFileItem(
@@ -302,147 +361,93 @@ export class SourceControlView extends ItemView {
     ): void {
         const item = container.createDiv("folder-git-file-item");
 
-        // Status badge
-        const statusBadge = item.createSpan(
-            `folder-git-status-badge folder-git-status-${file.displayStatus}`
-        );
-        statusBadge.setText(file.displayStatus);
+        item.createSpan({
+            cls: `folder-git-status-badge folder-git-status-${file.displayStatus}`,
+            text: file.displayStatus,
+        });
 
-        // File name
-        const fileName = item.createSpan("folder-git-file-name");
-        const parts = file.path.split("/");
-        const baseName = parts.pop() || file.path;
-        const dirPath = parts.join("/");
+        this.renderFileName(item, file.path);
 
-        fileName.createSpan({ text: baseName, cls: "folder-git-file-basename" });
-        if (dirPath) {
-            fileName.createSpan({ text: ` ${dirPath}`, cls: "folder-git-file-dir" });
-        }
-
-        // Actions
         const itemActions = item.createDiv("folder-git-file-actions");
 
-        // View diff
-        const diffBtn = itemActions.createEl("button", {
-            cls: "folder-git-icon-btn",
-            attr: { "aria-label": "View diff" },
-        });
-        setIcon(diffBtn, "file-diff");
-        diffBtn.addEventListener("click", (e) => {
+        this.createIconButton(itemActions, "file-text", "Open file", (e) => {
             e.stopPropagation();
-            void this.openDiff(file, isStaged);
+            this.openFile(file.vaultPath);
         });
 
         if (isStaged) {
-            // Unstage
-            const unstageBtn = itemActions.createEl("button", {
-                cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Unstage" },
-            });
-            setIcon(unstageBtn, "minus");
-            unstageBtn.addEventListener("click", (e) => {
+            this.createIconButton(itemActions, "minus", "Unstage", (e) => {
                 e.stopPropagation();
                 void this.unstageFile(file);
             });
         } else {
-            // Stage
-            const stageBtn = itemActions.createEl("button", {
-                cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Stage" },
-            });
-            setIcon(stageBtn, "plus");
-            stageBtn.addEventListener("click", (e) => {
+            this.createIconButton(itemActions, "undo", "Discard changes", (e) => {
                 e.stopPropagation();
-                void this.stageFile(file);
-            });
+                void this.discardFiles([file]);
+            }).addClass("folder-git-discard-btn");
 
-            // Discard
-            const discardBtn = itemActions.createEl("button", {
-                cls: "folder-git-icon-btn folder-git-discard-btn",
-                attr: { "aria-label": "Discard changes" },
-            });
-            setIcon(discardBtn, "undo");
-            discardBtn.addEventListener("click", (e) => {
+            this.createIconButton(itemActions, "plus", "Stage", (e) => {
                 e.stopPropagation();
-                void this.discardFile(file);
+                void this.stagePaths([file.path], "stage");
             });
         }
 
-        // Click to open file
+        // Click to view diff
         item.addEventListener("click", () => {
             void this.openDiff(file, isStaged);
         });
 
-        // Context menu
         item.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             this.showFileContextMenu(e, file, isStaged);
         });
     }
 
+    private toRepoRelative(vaultPath: string): string {
+        return this.activeRepo && vaultPath.startsWith(this.activeRepo + "/")
+            ? vaultPath.slice(this.activeRepo.length + 1)
+            : vaultPath;
+    }
+
     private renderUntrackedSection(container: HTMLElement, files: string[]): void {
         const section = container.createDiv("folder-git-section");
+        const sectionActions = this.renderSectionHeader(section, "Untracked", files.length);
 
-        const sectionHeader = section.createDiv("folder-git-section-header");
-        const titleEl = sectionHeader.createSpan("folder-git-section-title");
-        titleEl.setText(`Untracked (${files.length})`);
-
-        // Stage all untracked
-        const sectionActions = sectionHeader.createDiv("folder-git-section-actions");
-        const stageAllBtn = sectionActions.createEl("button", {
-            cls: "folder-git-icon-btn",
-            attr: { "aria-label": "Stage all untracked" },
+        this.createIconButton(sectionActions, "plus", "Stage all untracked", () => {
+            void this.stagePaths(files.map((f) => this.toRepoRelative(f)), "stage");
         });
-        setIcon(stageAllBtn, "plus");
-        stageAllBtn.addEventListener("click", () => { void this.stageAllFiles(); });
 
         const fileList = section.createDiv("folder-git-file-list");
-        for (const filePath of files) {
+        for (const vaultPath of files) {
+            const repoRelativePath = this.toRepoRelative(vaultPath);
+            const fileResult: FileStatusResult = {
+                path: repoRelativePath,
+                vaultPath,
+                indexStatus: "?",
+                workingTreeStatus: "?",
+                displayStatus: "?",
+            };
+
             const item = fileList.createDiv("folder-git-file-item");
+            item.createSpan({ cls: "folder-git-status-badge folder-git-status-untracked", text: "U" })
+                .setAttr("aria-label", "Untracked");
 
-            const statusBadge = item.createSpan("folder-git-status-badge folder-git-status-\\?");
-            statusBadge.setText("?");
-
-            const fileName = item.createSpan("folder-git-file-name");
-            const parts = filePath.split("/");
-            const baseName = parts.pop() || filePath;
-            fileName.createSpan({ text: baseName, cls: "folder-git-file-basename" });
+            this.renderFileName(item, repoRelativePath);
 
             const itemActions = item.createDiv("folder-git-file-actions");
-            const stageBtn = itemActions.createEl("button", {
-                cls: "folder-git-icon-btn",
-                attr: { "aria-label": "Stage" },
-            });
-            setIcon(stageBtn, "plus");
-
-            // Get relative path for staging
-            const repoRelativePath = this.activeRepo
-                ? filePath.replace(this.activeRepo + "/", "")
-                : filePath;
-
-            stageBtn.addEventListener("click", (e) => {
+            this.createIconButton(itemActions, "eye-off", "Add to .gitignore", (e) => {
                 e.stopPropagation();
-                void (async () => {
-                    try {
-                        await this.plugin.repoRegistry.stage(this.activeRepo, [repoRelativePath]);
-                        await this.refresh();
-                    } catch (err) {
-                        new Notice(`Failed to stage: ${(err as Error).message}`);
-                    }
-                })();
+                this.ignoreFile(fileResult);
+            });
+            this.createIconButton(itemActions, "plus", "Stage", (e) => {
+                e.stopPropagation();
+                void this.stagePaths([repoRelativePath], "stage");
             });
 
-            // Context menu for untracked files
+            item.addEventListener("click", () => this.openFile(vaultPath));
+
             item.addEventListener("contextmenu", (e) => {
                 e.preventDefault();
-                // Create a dummy FileStatusResult for the context menu
-                const fileResult: FileStatusResult = {
-                    path: repoRelativePath,
-                    vaultPath: filePath,
-                    indexStatus: "?",
-                    workingTreeStatus: "?",
-                    displayStatus: "?",
-                };
                 this.showFileContextMenu(e, fileResult, false);
             });
         }
@@ -450,17 +455,26 @@ export class SourceControlView extends ItemView {
 
     private renderConflictedSection(container: HTMLElement, files: string[]): void {
         const section = container.createDiv("folder-git-section folder-git-conflicted");
-        const sectionHeader = section.createDiv("folder-git-section-header");
-        const titleEl = sectionHeader.createSpan("folder-git-section-title");
-        titleEl.setText(`⚠ Conflicts (${files.length})`);
+        const sectionActions = this.renderSectionHeader(section, "⚠ Merge conflicts", files.length);
+
+        this.createIconButton(sectionActions, "check-check", "Mark all as resolved", () => {
+            void this.stagePaths(files.map((f) => this.toRepoRelative(f)), "resolve");
+        });
 
         const fileList = section.createDiv("folder-git-file-list");
-        for (const filePath of files) {
+        for (const vaultPath of files) {
+            const repoRelativePath = this.toRepoRelative(vaultPath);
             const item = fileList.createDiv("folder-git-file-item");
-            const statusBadge = item.createSpan("folder-git-status-badge folder-git-status-U");
-            statusBadge.setText("U");
-            const fileName = item.createSpan("folder-git-file-name");
-            fileName.createSpan({ text: filePath, cls: "folder-git-file-basename" });
+            item.createSpan({ cls: "folder-git-status-badge folder-git-status-U", text: "!" });
+            this.renderFileName(item, repoRelativePath);
+
+            const itemActions = item.createDiv("folder-git-file-actions");
+            this.createIconButton(itemActions, "check", "Mark as resolved (stage)", (e) => {
+                e.stopPropagation();
+                void this.stagePaths([repoRelativePath], "resolve");
+            });
+
+            item.addEventListener("click", () => this.openFile(vaultPath));
         }
     }
 
@@ -480,144 +494,142 @@ export class SourceControlView extends ItemView {
     // ─── Actions ────────────────────────────────────────────────────────
 
     async refresh(): Promise<void> {
-        this.isLoading = true;
-        await this.render();
-        this.isLoading = false;
-        await this.render();
+        await this.plugin.refreshViews();
     }
 
-    private async stageFile(file: FileStatusResult): Promise<void> {
+    private async runAction(action: RepoAction): Promise<void> {
+        if (this.busyAction) return;
+        this.busyAction = action;
+        await this.render();
         try {
-            await this.plugin.repoRegistry.stage(this.activeRepo, [file.path]);
-            await this.refresh();
-        } catch (e) {
-            new Notice(`Failed to stage: ${(e as Error).message}`);
+            await this.plugin.runRepoAction(action, this.activeRepo);
+        } finally {
+            this.busyAction = null;
+            await this.render();
         }
+    }
+
+    private async stagePaths(paths: string[], verb: "stage" | "resolve"): Promise<void> {
+        try {
+            await this.plugin.repoRegistry.stage(this.activeRepo, paths);
+        } catch (e) {
+            new Notice(`Failed to ${verb}: ${(e as Error).message}`);
+        }
+        await this.refresh();
     }
 
     private async unstageFile(file: FileStatusResult): Promise<void> {
         try {
             await this.plugin.repoRegistry.unstage(this.activeRepo, [file.path]);
-            await this.refresh();
         } catch (e) {
             new Notice(`Failed to unstage: ${(e as Error).message}`);
         }
+        await this.refresh();
     }
 
-    private async discardFile(file: FileStatusResult): Promise<void> {
+    private async discardFiles(files: FileStatusResult[]): Promise<void> {
+        const what = files.length === 1 ? `"${files[0].path}"` : `${files.length} files`;
+        const ok = await new ConfirmModal(
+            this.app,
+            `Discard changes to ${what}? This cannot be undone.`,
+            "Discard"
+        ).ask();
+        if (!ok) return;
+
         try {
-            await this.plugin.repoRegistry.discard(this.activeRepo, file.path);
-            await this.refresh();
-            new Notice(`Discarded changes: ${file.path}`);
+            for (const file of files) {
+                await this.plugin.repoRegistry.discard(this.activeRepo, file.path);
+            }
+            new Notice(`Discarded changes to ${what}`);
         } catch (e) {
             new Notice(`Failed to discard: ${(e as Error).message}`);
         }
-    }
-
-    private async stageAllFiles(): Promise<void> {
-        try {
-            await this.plugin.repoRegistry.stageAll(this.activeRepo);
-            await this.refresh();
-        } catch (e) {
-            new Notice(`Failed to stage all: ${(e as Error).message}`);
-        }
+        await this.refresh();
     }
 
     private async unstageAllFiles(): Promise<void> {
         try {
             await this.plugin.repoRegistry.unstageAll(this.activeRepo);
-            await this.refresh();
         } catch (e) {
             new Notice(`Failed to unstage all: ${(e as Error).message}`);
         }
+        await this.refresh();
+    }
+
+    /** Message from the input, or the repo's template when left empty */
+    private getCommitMessage(): string {
+        const typed = this.commitInput?.value?.trim();
+        if (typed) return typed;
+        const repo = this.plugin.repoRegistry.getRepo(this.activeRepo);
+        return renderCommitMessage(repo?.config.commitMessageTemplate ?? "");
+    }
+
+    private clearDraft(): void {
+        this.drafts.delete(this.activeRepo);
+        if (this.commitInput) this.commitInput.value = "";
     }
 
     private async commitChanges(): Promise<void> {
-        const message = this.commitInput?.value?.trim();
-        if (!message) {
-            new Notice("Please enter a commit message.");
-            return;
-        }
+        const folderPath = this.activeRepo;
         try {
-            await this.plugin.repoRegistry.commit(this.activeRepo, message);
-            if (this.commitInput) this.commitInput.value = "";
-            new Notice(`Committed to "${this.activeRepo || "vault root"}"`);
+            await this.plugin.repoRegistry.commit(folderPath, this.getCommitMessage());
+            this.clearDraft();
+            new Notice(`Committed to "${folderPath || "vault root"}"`);
         } catch (e) {
             new Notice(`Commit failed: ${(e as Error).message}`);
             return;
         }
-
-        // Auto-push if configured (separate try/catch so commit success is preserved)
-        const repo = this.plugin.repoRegistry.getRepo(this.activeRepo);
-        if (repo?.config.autoPush) {
-            try {
-                await this.plugin.repoRegistry.push(this.activeRepo);
-                new Notice("Pushed to remote.");
-            } catch (e) {
-                new Notice(`Commit succeeded, but push failed: ${(e as Error).message}`);
-            }
-        }
-
-        await this.refresh();
+        await this.afterCommit(folderPath);
     }
 
     private async commitAll(): Promise<void> {
-        const message = this.commitInput?.value?.trim();
-        if (!message) {
-            new Notice("Please enter a commit message.");
-            return;
-        }
+        const folderPath = this.activeRepo;
         try {
-            await this.plugin.repoRegistry.stageAll(this.activeRepo);
-            await this.plugin.repoRegistry.commit(this.activeRepo, message);
-            if (this.commitInput) this.commitInput.value = "";
-            new Notice(`Committed all changes to "${this.activeRepo || "vault root"}"`);
+            const committed = await this.plugin.repoRegistry.commitAll(folderPath, this.getCommitMessage());
+            if (!committed) {
+                new Notice("Nothing to commit.");
+                return;
+            }
+            this.clearDraft();
+            new Notice(`Committed all changes to "${folderPath || "vault root"}"`);
         } catch (e) {
             new Notice(`Commit all failed: ${(e as Error).message}`);
             return;
         }
-
-        // Auto-push if configured (separate try/catch)
-        const repo = this.plugin.repoRegistry.getRepo(this.activeRepo);
-        if (repo?.config.autoPush) {
-            try {
-                await this.plugin.repoRegistry.push(this.activeRepo);
-                new Notice("Pushed to remote.");
-            } catch (e) {
-                new Notice(`Commit succeeded, but push failed: ${(e as Error).message}`);
-            }
-        }
-
-        await this.refresh();
+        await this.afterCommit(folderPath);
     }
 
-    private async pushRepo(): Promise<void> {
-        try {
-            await this.plugin.repoRegistry.push(this.activeRepo);
-            new Notice("Push successful.");
+    private async afterCommit(folderPath: string): Promise<void> {
+        const repo = this.plugin.repoRegistry.getRepo(folderPath);
+        if (repo?.config.autoPush && repo.config.remoteUrl) {
+            await this.plugin.runRepoAction("push", folderPath);
+        } else {
             await this.refresh();
-        } catch (e) {
-            new Notice(`Push failed: ${(e as Error).message}`);
         }
     }
 
-    private async pullRepo(): Promise<void> {
-        try {
-            await this.plugin.repoRegistry.pull(this.activeRepo);
-            new Notice("Pull successful.");
-            await this.refresh();
-        } catch (e) {
-            new Notice(`Pull failed: ${(e as Error).message}`);
+    private openFile(vaultPath: string): void {
+        const target = vaultPath.replace(/\/$/, "");
+        if (this.app.vault.getAbstractFileByPath(target)) {
+            void this.app.workspace.openLinkText(target, "", false);
+        } else {
+            new Notice("File is not available in the vault (deleted, hidden or ignored by Obsidian).");
         }
+    }
+
+    private ignoreFile(file: FileStatusResult): void {
+        try {
+            this.plugin.repoRegistry.addToGitignore(this.activeRepo, file.path);
+            new Notice(`Added "${file.path}" to .gitignore`);
+        } catch (e) {
+            new Notice(`Failed to add to .gitignore: ${(e as Error).message}`);
+        }
+        void this.refresh();
     }
 
     private async openDiff(file: FileStatusResult, staged: boolean): Promise<void> {
         try {
-            const diff = await this.plugin.repoRegistry.getDiff(
-                this.activeRepo,
-                file.path,
-                staged
-            );
+            const diff = await this.plugin.repoRegistry.getDiff(this.activeRepo, file.path, staged);
             this.plugin.openDiffModal(file.path, diff);
         } catch (e) {
             new Notice(`Failed to load diff: ${(e as Error).message}`);
@@ -626,81 +638,49 @@ export class SourceControlView extends ItemView {
 
     private showFileContextMenu(evt: MouseEvent, file: FileStatusResult, isStaged: boolean): void {
         const menu = new Menu();
+        const isUntracked = file.displayStatus === "?";
 
-        menu.addItem((item) =>
-            item
-                .setTitle("View diff")
-                .setIcon("file-diff")
-                .onClick(() => this.openDiff(file, isStaged))
-        );
+        if (!isUntracked) {
+            menu.addItem((item) =>
+                item.setTitle("View diff").setIcon("file-diff").onClick(() => this.openDiff(file, isStaged))
+            );
+        }
 
         if (isStaged) {
             menu.addItem((item) =>
-                item
-                    .setTitle("Unstage file")
-                    .setIcon("minus")
-                    .onClick(() => this.unstageFile(file))
+                item.setTitle("Unstage file").setIcon("minus").onClick(() => this.unstageFile(file))
             );
         } else {
-            // Stage
             menu.addItem((item) =>
-                item
-                    .setTitle("Stage file")
-                    .setIcon("plus")
-                    .onClick(() => this.stageFile(file))
+                item.setTitle("Stage file").setIcon("plus").onClick(() => this.stagePaths([file.path], "stage"))
             );
 
-            // Add to .gitignore (only if untracked or modified)
-            // If it's untracked (?), we definitely want to allow adding to gitignore
-            if (file.displayStatus === "?") {
+            if (isUntracked) {
                 menu.addItem((item) =>
-                    item
-                        .setTitle("Add to .gitignore")
-                        .setIcon("eye-off")
-                        .onClick(() => {
-                            void (async () => {
-                                try {
-                                    this.plugin.repoRegistry.addToGitignore(this.activeRepo, file.path);
-                                    new Notice(`Added "${file.path}" to .gitignore`);
-                                    await this.refresh();
-                                } catch (e) {
-                                    new Notice(`Failed to add to .gitignore: ${(e as Error).message}`);
-                                }
-                            })();
-                        })
+                    item.setTitle("Add to .gitignore").setIcon("eye-off").onClick(() => this.ignoreFile(file))
                 );
-            }
-
-
-            // Allow discard for modified files (not untracked usually, but standard git allows clean)
-            if (file.displayStatus !== "?") {
+            } else {
                 menu.addItem((item) =>
-                    item
-                        .setTitle("Discard changes")
-                        .setIcon("undo")
-                        .onClick(() => this.discardFile(file))
+                    item.setTitle("Discard changes").setIcon("undo").onClick(() => this.discardFiles([file]))
                 );
             }
         }
 
         menu.addItem((item) =>
-            item
-                .setTitle("Open file")
-                .setIcon("file-text")
-                .onClick(() => {
-                    const tFile = this.app.vault.getAbstractFileByPath(file.vaultPath);
-                    if (tFile) {
-                        void this.app.workspace.openLinkText(file.vaultPath, "", false);
-                    }
-                })
+            item.setTitle("Open file").setIcon("file-text").onClick(() => this.openFile(file.vaultPath))
         );
 
         menu.showAtMouseEvent(evt);
     }
 
+    /** Focus the commit message input (used by the commit command) */
+    focusCommitInput(): void {
+        this.commitInput?.focus();
+    }
+
     /** Programmatically set the active repo and refresh */
     async setActiveRepo(folderPath: string): Promise<void> {
         this.activeRepo = folderPath;
-        await this.refresh();
+        await this.render();
     }
 }
