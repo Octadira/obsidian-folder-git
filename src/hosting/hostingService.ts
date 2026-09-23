@@ -54,6 +54,8 @@ export interface HostingAccount {
     gitHost: string;
     username: string;
     token: string;
+    /** Whether the token may be sent to plain http:// remotes (only for an http:// Forgejo instance) */
+    allowHttp: boolean;
 }
 
 /**
@@ -72,11 +74,12 @@ export function normalizeInstanceUrl(input: string): string {
     return value;
 }
 
-/** Extract "host[:port]" from an http(s) remote URL, or null for SSH/other remotes */
-export function httpsRemoteHost(remoteUrl: string): string | null {
+/** Scheme and "host[:port]" of an http(s) remote URL, or null for SSH/other remotes */
+export function httpRemoteHost(remoteUrl: string): { secure: boolean; host: string } | null {
     if (!/^https?:\/\//i.test(remoteUrl)) return null;
     try {
-        return new URL(remoteUrl).host.toLowerCase();
+        const url = new URL(remoteUrl);
+        return { secure: url.protocol === "https:", host: url.host.toLowerCase() };
     } catch {
         return null;
     }
@@ -104,16 +107,19 @@ export function getConfiguredAccounts(settings: PluginSettings): HostingAccount[
             gitHost: "github.com",
             username: settings.githubUsername,
             token: settings.githubToken,
+            allowHttp: false,
         });
     }
     if (settings.forgejoToken && settings.forgejoUsername && settings.forgejoUrl) {
         try {
-            const host = new URL(normalizeInstanceUrl(settings.forgejoUrl)).host.toLowerCase();
+            const url = new URL(normalizeInstanceUrl(settings.forgejoUrl));
             accounts.push({
                 id: "forgejo",
-                gitHost: host,
+                gitHost: url.host.toLowerCase(),
                 username: settings.forgejoUsername,
                 token: settings.forgejoToken,
+                // The user already chose (and was warned about) an http:// instance
+                allowHttp: url.protocol === "http:",
             });
         } catch {
             // Invalid instance URL — ignore
@@ -122,9 +128,16 @@ export function getConfiguredAccounts(settings: PluginSettings): HostingAccount[
     return accounts;
 }
 
-/** Find the account whose host matches an HTTPS remote URL */
+/**
+ * Find the account whose host matches an http(s) remote URL.
+ * Tokens are never offered to plain http:// remotes, except for an http:// Forgejo instance.
+ */
 export function findAccountForRemote(settings: PluginSettings, remoteUrl: string): HostingAccount | null {
-    const host = httpsRemoteHost(remoteUrl);
-    if (!host) return null;
-    return getConfiguredAccounts(settings).find((a) => a.gitHost === host) ?? null;
+    const remote = httpRemoteHost(remoteUrl);
+    if (!remote) return null;
+    return (
+        getConfiguredAccounts(settings).find(
+            (a) => a.gitHost === remote.host && (remote.secure || a.allowHttp)
+        ) ?? null
+    );
 }

@@ -195,6 +195,7 @@ export class RepoRegistry {
         this.updateAutoCommit(config.folderPath);
 
         await this.removeLegacyCredentialConfig(absolutePath);
+        if (config.folderPath === "") this.protectPluginData();
     }
 
     /** Remove a repo from tracking (does NOT delete the .git folder) */
@@ -634,6 +635,35 @@ export class RepoRegistry {
                 // Ignore — best-effort cleanup
             }
         }
+    }
+
+    /**
+     * A vault-root repository contains the plugin's data.json, which holds the access tokens.
+     * Make sure it is ignored, and warn if it has already been committed.
+     */
+    private protectPluginData(): void {
+        const dataPath = `${this.plugin.app.vault.configDir}/plugins/${this.plugin.manifest.id}/data.json`;
+        void this.exclusive("", async () => {
+            const instance = this.repos.get("");
+            if (!instance) return;
+            if (!(await this.checkIgnored("", dataPath))) {
+                this.addToGitignore("", dataPath);
+                new Notice(`Folder Git: added "${dataPath}" to the vault's .gitignore because it contains your access tokens.`);
+            }
+            try {
+                // Succeeds only if the file is tracked
+                await instance.git.raw(["ls-files", "--error-unmatch", "--", dataPath]);
+                new Notice(
+                    `Folder Git: "${dataPath}" is already committed and contains your access tokens. ` +
+                    `Run "git rm --cached ${dataPath}", and revoke the tokens if you have pushed it.`,
+                    0
+                );
+            } catch {
+                // Not tracked
+            }
+        }).catch((e: Error) => {
+            new Notice(`Folder Git: could not protect "${dataPath}": ${e.message}`);
+        });
     }
 
     // ─── Gitignore Management ──────────────────────────────────────────────

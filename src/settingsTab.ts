@@ -76,7 +76,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
             text.inputEl.type = "password";
             text.inputEl.addClass("folder-git-token-input");
             text
-                .setPlaceholder("Ghp_xxxxxxxxxxxx")
+                .setPlaceholder("Token")
                 .setValue(this.plugin.settings.githubToken)
                 .onChange(async (value) => {
                     this.plugin.settings.githubToken = value.trim();
@@ -298,7 +298,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
         // Remove repo button
         new Setting(section)
-            .setDesc("Stops tracking this folder in the plugin. The .Git folder is not deleted.")
+            .setDesc("Stops tracking this folder in the plugin. Your files and their Git history are kept.")
             .addButton((btn) => {
                 btn.setButtonText("Remove")
                     .setWarning()

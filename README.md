@@ -22,7 +22,7 @@
   - Create a new remote repository while adding a folder: under your account or one of your organizations, private or public.
   - Forgejo: create a new organization from the same dialog.
   - Clone private repositories over HTTPS.
-- **Auto-backup.** Per-repository auto-commit interval, commit message template (`{{date}}` placeholder) and auto-push.
+- **Auto-backup.** Per-repository auto-commit interval, commit message template (`{{date}}` placeholder) and auto-push after every commit.
 - **`.gitignore` tools.** Built-in `.gitignore` editor, plus *Add to / Remove from .gitignore* in the file explorer context menu.
 - **Context menu.** Right-click a folder to add it as a repository. On a repository root folder you can open Source Control or History, pull, push, or edit `.gitignore`.
 
@@ -80,6 +80,26 @@ Open it from the ribbon icon or with **Folder Git: Open source control**.
 
 The *active repo* is the one containing the file you are editing. Otherwise it is the one selected in the Source Control panel. If that is still ambiguous, you are asked to pick one.
 
+## Settings
+
+**General**
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Git binary path | *(empty)* | Path to the `git` executable. Leave empty to use the one on your `PATH`. Takes effect after reloading the plugin. |
+| Show untracked files | On | Show untracked files in the Source Control panel. |
+| Status refresh interval | 30 s | How often `git status` runs for each repository. `0` turns auto-refresh off. |
+
+**Per repository** (under *Configured repositories*)
+
+| Setting | Description |
+| --- | --- |
+| Remote URL | Applied to the repository's remote when you leave the field. |
+| Auto-push after commit | Push after every commit made from the plugin, manual or automatic. On by default when the repository has a remote. |
+| Auto-commit interval | Minutes between automatic *stage all + commit*. `0` disables it. |
+| Commit message template | Used by auto-commit and when the commit message is empty. `{{date}}` becomes the current ISO date. |
+| Remove | Stops tracking the folder. The `.git` folder and your files are left untouched. |
+
 ## Authentication
 
 Tokens are only needed to **create remote repositories** and to **push, pull or clone over HTTPS**. SSH remotes keep using your SSH keys and need no token.
@@ -88,7 +108,7 @@ Tokens are only needed to **create remote repositories** and to **push, pull or 
 
 1. Create a [personal access token](https://github.com/settings/tokens):
    - Classic token: `repo` scope. Add `read:org` if you want your private organization memberships listed.
-   - Fine-grained token: *Contents* and *Administration* read and write permissions on the repositories it should manage.
+   - Fine-grained token: *Contents* and *Administration* read and write permissions. To create new repositories the token needs access to **All repositories**. For organization repositories, set the organization as the token's *Resource owner*.
 2. In **Settings → Folder Git → GitHub**, paste the token and select **Validate**.
 
 ### Forgejo / Gitea / Codeberg
@@ -102,13 +122,43 @@ Tokens are only needed to **create remote repositories** and to **push, pull or 
 
 ## Privacy and security
 
-- **Where tokens are stored.** Tokens are saved in the plugin's `data.json` inside your vault (`.obsidian/plugins/folder-git/`). If you sync or commit your `.obsidian` folder, exclude that file.
-- **How tokens are used.** Tokens are passed to Git **in memory only** (via environment variables and a temporary credential helper), during push, pull, fetch and clone. They are only used for HTTPS remotes whose host matches `github.com` or your Forgejo instance. They are never written to `.git/config`, credential files or remote URLs.
-- **Network access.** The plugin only contacts `api.github.com` and the Forgejo instance you configure, plus the Git remotes of your repositories.
-- **Local changes.** The plugin runs Git commands in the folders you add and edits `.gitignore` files when you ask it to.
-- **Plain `http://` instances.** A Forgejo instance on `http://` receives your token unencrypted, and the plugin warns you when you validate one.
+### Where tokens are stored
 
-> **Upgrading from 1.0.x:** earlier versions stored the GitHub token in a `.git-credentials` file and pointed each repository's `credential.helper` at it. Version 1.1.0 removes both automatically.
+Tokens are saved **unencrypted** in the plugin's settings file: `<vault>/.obsidian/plugins/folder-git/data.json`. Anything that copies that file copies your tokens.
+
+- **Vault root as a repository.** *Commit all* and auto-commit stage everything, including `.obsidian/`. When you add the vault root as a repository, the plugin adds `.obsidian/plugins/folder-git/data.json` to the vault's `.gitignore` (unless Git already ignores it). It also warns you if the file is already committed; in that case run `git rm --cached` on it and revoke the tokens if you pushed it.
+- **Other sync tools.** Obsidian Sync (when *Installed community plugins* sync is on), iCloud, Dropbox and similar tools copy `data.json` to your other devices. Exclude the file, or accept that the token lives there too.
+- **Least privilege.** Use a fine-grained or narrowly scoped token with an expiry date, and revoke it if the file ever leaks.
+
+### How tokens are used
+
+- **API calls.** When you validate a token, create a repository or organization, or list organizations, the token is sent in the `Authorization` header to `api.github.com` or to `<your Forgejo instance>/api/v1`. It is never put in a URL.
+- **Git operations.** During push, pull, sync, fetch and clone, the token is handed to that one Git process through environment variables. A credential helper passed on the command line (`-c credential.helper=…`) reads them. Nothing is written to `.git/config`, to a credentials file or to the remote URL.
+- **Host matching.** A token is only offered to an `https://` remote whose host (and port) exactly matches `github.com` or your Forgejo instance. Other remotes never see it.
+- **Other credential helpers.** For matching hosts, the plugin's helper replaces any configured helper (such as Git Credential Manager or the macOS keychain) for that command. For every other host, your normal Git configuration applies.
+- **No prompts.** Network operations run with `GIT_TERMINAL_PROMPT=0`, so Git fails instead of waiting for a password it cannot ask for.
+- **Process environment.** While a network operation runs, the token is in the Git process's environment. Other programs running as your user could read it there.
+- **SSH remotes** use your SSH keys and agent. The plugin never sends a token over SSH.
+
+### Plain `http://`
+
+Tokens are never sent to `http://` remotes, with one exception. If you configure a Forgejo instance on `http://`, its `http://` remotes receive the token unencrypted, and the plugin warns you when you validate it.
+
+### Network access
+
+The plugin only connects to `api.github.com`, the Forgejo instance you configure, and the Git remotes of your repositories. There is no telemetry, analytics or update check.
+
+### Local changes
+
+- The plugin runs Git only in the folders you add, plus `git clone` into the folder you choose.
+- It writes `.gitignore` only when you use the `.gitignore` editor or the *Add to / Remove from .gitignore* actions.
+- Git runs with your environment, so variables such as `GIT_SSH_COMMAND`, `EDITOR` or `GIT_ASKPASS` apply exactly as they do in a terminal.
+
+### Upgrading from 1.0.x
+
+Versions up to 1.0.4 stored the GitHub token in a plaintext `.git-credentials` file in the plugin folder and pointed each repository's `credential.helper` at it. From 1.1.0 on, the plugin deletes that file when it loads and removes that `credential.helper` entry from each repository when it opens it.
+
+If that file was ever synced, backed up or committed, **revoke the old token** and create a new one.
 
 ## Troubleshooting
 
@@ -118,7 +168,16 @@ Tokens are only needed to **create remote repositories** and to **push, pull or 
 | Git not found | Install Git, or set **Git binary path** in settings (reload the plugin afterwards). |
 | Push asks for credentials or fails with 401/403 | Validate the matching token in settings and check its permissions. For other hosts, use SSH or your system's Git credential manager. |
 | *"No commits yet — commit before pushing"* | Make the first commit before pushing. |
+| Push fails on a host that matches your token, even though Git Credential Manager has valid credentials | For matching hosts only the plugin's token is used. Validate a working token, or switch the remote to SSH. |
 | Organizations are not listed | Grant the token organization read access (Forgejo) or `read:org` (GitHub classic), then press the reload button next to **Owner**. |
+
+## Limitations
+
+- Desktop only. Git runs as an external process, which Obsidian mobile does not support.
+- There is no UI for branches. The plugin works on the current branch; use Git in a terminal to create or switch branches.
+- Merge conflicts are resolved by editing the files. The plugin can only mark them as resolved (stage).
+- The History view shows the last 50 commits.
+- Tokens can be stored for one GitHub account and one Forgejo instance. Other HTTPS hosts rely on your system's Git credential setup.
 
 ## Contributing
 

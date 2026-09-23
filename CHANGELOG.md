@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- Tokens are no longer offered to plain `http://` remotes. The only exception is a Forgejo instance that is itself configured on `http://`.
+- When the vault root is a repository, the plugin adds its own `data.json` (which holds your tokens) to the vault's `.gitignore`, and warns you if the file has already been committed.
+
+### Changed
+- README: expanded privacy and security section, new Settings and Limitations sections.
+- Settings: clearer placeholder for the GitHub token and clearer text for the *Remove* button.
+
 ## 1.1.2
 
 ### Changed
