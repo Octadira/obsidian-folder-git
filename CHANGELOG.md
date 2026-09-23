@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.3
 
 ### Security
 - Tokens are no longer offered to plain `http://` remotes. The only exception is a Forgejo instance that is itself configured on `http://`.
