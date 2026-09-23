@@ -1,5 +1,5 @@
 import { Modal, App, Setting, Notice, TFolder, type ButtonComponent, type TextComponent } from "obsidian";
-import * as fs from "fs";
+import { fs } from "../nodeApi";
 import { DEFAULT_REPO_CONFIG, type FolderRepoConfig, type PluginSettings } from "../types";
 import type { RepoRegistry } from "../repoRegistry";
 import {

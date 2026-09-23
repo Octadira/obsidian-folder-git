@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1
+
+### Security
+- Update `simple-git` to 3.36 to address a published vulnerability advisory (affected versions < 3.32.0).
+
+### Changed
+- Environment variables such as `EDITOR`, `PAGER`, `GIT_SSH_COMMAND` or `SSH_ASKPASS` keep working with the updated `simple-git` (whose new safety checks would otherwise block every Git command); they are honoured exactly as when running Git from a terminal.
+- Resolve all code-quality warnings reported by Obsidian's automated review (type-safe access to Node APIs, timer usage).
+
 ## 1.1.0
 
 ### Added

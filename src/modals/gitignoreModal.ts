@@ -53,7 +53,7 @@ export class GitignoreModal extends Modal {
                     })
             );
 
-        activeWindow.setTimeout(() => textarea.focus(), 0);
+        window.setTimeout(() => textarea.focus(), 0);
     }
 
     onClose(): void {

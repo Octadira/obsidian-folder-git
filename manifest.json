@@ -1,7 +1,7 @@
 {
     "id": "folder-git",
     "name": "Folder Git",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "minAppVersion": "1.7.2",
     "description": "Per-folder Git source control with GitHub and Forgejo support — manage separate Git repositories for each folder in your vault.",
     "author": "octadira",

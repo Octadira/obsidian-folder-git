@@ -1,6 +1,6 @@
 import simpleGit, { CheckRepoActions, type SimpleGit, type SimpleGitOptions } from "simple-git";
 import { FileSystemAdapter, Notice } from "obsidian";
-import * as fs from "fs";
+import { fs, processEnv } from "./nodeApi";
 import {
     renderCommitMessage,
     type FolderRepoConfig,
@@ -20,6 +20,30 @@ import { findAccountForRemote } from "./hosting/hostingService";
  */
 const ENV_CREDENTIAL_HELPER =
     '!f() { test "$1" = get || return 0; echo "username=$FOLDER_GIT_USERNAME"; echo "password=$FOLDER_GIT_TOKEN"; }; f';
+
+type EnvMap = Record<string, string | undefined>;
+
+/** Environment variables (lowercase) that simple-git blocks unless the matching unsafe flag is set */
+const ENV_UNSAFE_CATEGORIES: Record<string, string> = {
+    editor: "allowUnsafeEditor",
+    git_askpass: "allowUnsafeAskPass",
+    git_config_global: "allowUnsafeConfigPaths",
+    git_config_system: "allowUnsafeConfigPaths",
+    git_config_count: "allowUnsafeConfigEnvCount",
+    git_config: "allowUnsafeConfigPaths",
+    git_editor: "allowUnsafeEditor",
+    git_exec_path: "allowUnsafeConfigPaths",
+    git_external_diff: "allowUnsafeDiffExternal",
+    git_pager: "allowUnsafePager",
+    git_proxy_command: "allowUnsafeGitProxy",
+    git_template_dir: "allowUnsafeTemplateDir",
+    git_sequence_editor: "allowUnsafeEditor",
+    git_ssh: "allowUnsafeSshCommand",
+    git_ssh_command: "allowUnsafeSshCommand",
+    pager: "allowUnsafePager",
+    prefix: "allowUnsafeConfigPaths",
+    ssh_askpass: "allowUnsafeAskPass",
+};
 
 /**
  * RepoRegistry: manages N SimpleGit instances, one per configured folder.
@@ -45,16 +69,40 @@ export class RepoRegistry {
         return `${this.vaultBasePath}/${folderPath}`;
     }
 
-    /** Base simple-git options honoring the custom binary setting */
-    private gitOptions(baseDir?: string): Partial<SimpleGitOptions> {
+    /**
+     * Create a simple-git instance.
+     *
+     * simple-git refuses to run when the environment contains variables such as EDITOR,
+     * PAGER or GIT_SSH_COMMAND unless the matching `unsafe` flag is set. Those come from the
+     * user's own environment (trusted), so the flags are enabled only for variables that are
+     * actually present — keeping git's behavior identical to running it from a terminal.
+     */
+    private createGit(
+        baseDir: string | undefined,
+        extraEnv: EnvMap = {},
+        extraConfig: string[] = [],
+        allowCredentialHelper = false
+    ): SimpleGit {
         const binary = this.plugin.settings.gitBinaryPath.trim();
-        return {
+        const env: EnvMap = { ...processEnv(), ...extraEnv };
+
+        const unsafe: Record<string, boolean> = {};
+        // User-provided binary paths commonly contain spaces (e.g. "C:\Program Files\Git\...")
+        if (binary) unsafe.allowUnsafeCustomBinary = true;
+        // Only our fixed ENV_CREDENTIAL_HELPER is ever passed as credential.helper
+        if (allowCredentialHelper) unsafe.allowUnsafeCredentialHelper = true;
+        for (const key of Object.keys(env)) {
+            const category = ENV_UNSAFE_CATEGORIES[key.toLowerCase().trim()];
+            if (category) unsafe[category] = true;
+        }
+
+        const options: Partial<SimpleGitOptions> = {
             baseDir,
             binary: binary || undefined,
-            config: ["core.quotepath=off"],
-            // User-provided binary paths commonly contain spaces (e.g. "C:\Program Files\Git\...")
-            unsafe: binary ? { allowUnsafeCustomBinary: true } : undefined,
+            config: ["core.quotepath=off", ...extraConfig],
+            unsafe: unsafe as SimpleGitOptions["unsafe"],
         };
+        return simpleGit(options).env(env);
     }
 
     /**
@@ -63,21 +111,20 @@ export class RepoRegistry {
      * supplied through an env-based credential helper.
      */
     private networkGit(baseDir: string | undefined, remoteUrl: string): SimpleGit {
-        const options = this.gitOptions(baseDir);
-        const env: Record<string, string | undefined> = {
-            ...process.env,
-            GIT_TERMINAL_PROMPT: "0",
-        };
+        const env: EnvMap = { GIT_TERMINAL_PROMPT: "0" };
 
         const account = findAccountForRemote(this.plugin.settings, remoteUrl);
-        if (account) {
-            // Empty value resets inherited helpers so ours is the only one consulted
-            options.config = [...(options.config ?? []), "credential.helper=", `credential.helper=${ENV_CREDENTIAL_HELPER}`];
-            env.FOLDER_GIT_USERNAME = account.username;
-            env.FOLDER_GIT_TOKEN = account.token;
-        }
+        if (!account) return this.createGit(baseDir, env);
 
-        return simpleGit(options).env(env);
+        env.FOLDER_GIT_USERNAME = account.username;
+        env.FOLDER_GIT_TOKEN = account.token;
+        // Empty value resets inherited helpers so ours is the only one consulted
+        return this.createGit(
+            baseDir,
+            env,
+            ["credential.helper=", `credential.helper=${ENV_CREDENTIAL_HELPER}`],
+            true
+        );
     }
 
     /** Run `fn` after any pending operation on the same repo has finished */
@@ -127,9 +174,8 @@ export class RepoRegistry {
     async addRepo(config: FolderRepoConfig): Promise<void> {
         const absolutePath = this.resolveAbsolutePath(config.folderPath);
 
-        const git = simpleGit(this.gitOptions(absolutePath))
-            // Status refreshes must not take index.lock and collide with user operations
-            .env({ ...process.env, GIT_OPTIONAL_LOCKS: "0" });
+        // Status refreshes must not take index.lock and collide with user operations
+        const git = this.createGit(absolutePath, { GIT_OPTIONAL_LOCKS: "0" });
 
         // Verify this folder is itself a repository root (not just inside another one)
         const isRoot = await git.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
@@ -148,7 +194,7 @@ export class RepoRegistry {
         this.repos.set(config.folderPath, instance);
         this.updateAutoCommit(config.folderPath);
 
-        await this.removeLegacyCredentialConfig(git);
+        await this.removeLegacyCredentialConfig(absolutePath);
     }
 
     /** Remove a repo from tracking (does NOT delete the .git folder) */
@@ -409,7 +455,7 @@ export class RepoRegistry {
 
     /** Init a new git repo in a folder */
     async initRepo(absolutePath: string): Promise<void> {
-        const git = simpleGit(this.gitOptions(absolutePath));
+        const git = this.createGit(absolutePath);
         await git.init();
     }
 
@@ -458,7 +504,7 @@ export class RepoRegistry {
      */
     async detectRemotesFromPath(absolutePath: string): Promise<{ name: string; fetchUrl: string }[]> {
         if (!fs.existsSync(`${absolutePath}/.git`)) return [];
-        const git = simpleGit(this.gitOptions(absolutePath));
+        const git = this.createGit(absolutePath);
 
         try {
             const remotes = await git.getRemotes(true);
@@ -566,9 +612,10 @@ export class RepoRegistry {
      * Versions ≤1.0.4 stored the PAT in a plaintext credential-store file and pointed
      * the repo's local credential.helper at it. Remove that configuration.
      */
-    private async removeLegacyCredentialConfig(git: SimpleGit): Promise<void> {
+    private async removeLegacyCredentialConfig(absolutePath: string): Promise<void> {
         try {
-            await git.raw(["config", "--local", "--unset-all", "credential.helper", "folder-git.*\\.git-credentials"]);
+            // Touching credential.helper requires the explicit simple-git opt-in
+            await this.createGit(absolutePath, {}, [], true).raw(["config", "--local", "--unset-all", "credential.helper", "folder-git.*\\.git-credentials"]);
         } catch {
             // Exit code 5 = nothing to unset
         }

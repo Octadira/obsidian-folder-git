@@ -450,10 +450,12 @@ export default class FolderGitPlugin extends Plugin {
         let totalChanges = 0;
         const newStatuses = new Map<string, RepoStatus>();
 
-        const results = await Promise.allSettled(paths.map((p) => this.repoRegistry.getStatus(p)));
-        results.forEach((result, i) => {
-            if (result.status !== "fulfilled") return; // skip repos that error
-            const status = result.value;
+        const results: (RepoStatus | null)[] = await Promise.all(
+            // Repos that error are skipped
+            paths.map((p) => this.repoRegistry.getStatus(p).catch(() => null))
+        );
+        results.forEach((status, i) => {
+            if (!status) return;
             newStatuses.set(paths[i], status);
             totalChanges += status.staged.length + status.changed.length + status.untracked.length + status.conflicted.length;
         });

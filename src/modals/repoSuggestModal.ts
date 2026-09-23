@@ -29,7 +29,7 @@ export class RepoSuggestModal extends FuzzySuggestModal<string> {
     onClose(): void {
         super.onClose();
         // onChooseItem fires after onClose, so defer the "cancelled" check
-        activeWindow.setTimeout(() => {
+        window.setTimeout(() => {
             if (!this.chosen) this.onChoose(null);
         }, 0);
     }
