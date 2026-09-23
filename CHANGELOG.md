@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+### Changed
+- Read the process environment through the Node `process` module instead of `globalThis` (popout-window compatibility guideline).
+- Remove an unnecessary type assertion flagged by Obsidian's automated review.
+
 ## 1.1.1
 
 ### Security

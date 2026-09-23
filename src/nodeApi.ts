@@ -1,4 +1,5 @@
 import * as nodeFs from "fs";
+import * as nodeProcess from "process";
 
 /**
  * Minimal, explicitly typed view of the Node APIs this plugin uses.
@@ -16,8 +17,9 @@ export const fs = nodeFs as unknown as FsApi;
 
 type EnvMap = Record<string, string | undefined>;
 
+const proc = nodeProcess as unknown as { env?: EnvMap };
+
 /** Copy of the current process environment (used as the base env for git child processes) */
 export function processEnv(): EnvMap {
-    const proc = (globalThis as unknown as { process?: { env?: EnvMap } }).process;
-    return { ...(proc?.env ?? {}) };
+    return { ...(proc.env ?? {}) };
 }

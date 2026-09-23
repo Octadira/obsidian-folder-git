@@ -100,7 +100,7 @@ export class RepoRegistry {
             baseDir,
             binary: binary || undefined,
             config: ["core.quotepath=off", ...extraConfig],
-            unsafe: unsafe as SimpleGitOptions["unsafe"],
+            unsafe,
         };
         return simpleGit(options).env(env);
     }
