@@ -11,6 +11,8 @@ import {
     type GitLogEntry,
     type CommitMessage,
     type RepoError,
+    type StashEntry,
+    type ConflictSide,
     type FolderGitPluginInterface,
 } from "./types";
 import { findAccountForRemote } from "./hosting/hostingService";
@@ -320,6 +322,7 @@ export class RepoRegistry {
             conflicted,
             ahead: status.ahead,
             behind: status.behind,
+            merging: fs.existsSync(`${instance.absolutePath}/.git/MERGE_HEAD`),
         };
     }
 
@@ -496,10 +499,140 @@ export class RepoRegistry {
         };
     }
 
-    /** Checkout a branch */
-    async checkout(folderPath: string, branch: string): Promise<void> {
+    /** Local branches plus remote branches that have no local counterpart (as "remote/name") */
+    async listBranches(folderPath: string): Promise<{ current: string; local: string[]; remoteOnly: string[] }> {
         const instance = this.require(folderPath);
-        await this.exclusive(folderPath, () => instance.git.checkout(branch));
+        const branches = await instance.git.branch(["-a"]);
+        const local = branches.all.filter((n) => !n.startsWith("remotes/"));
+        const remoteOnly = branches.all
+            .filter((n) => n.startsWith("remotes/") && !n.endsWith("/HEAD"))
+            .map((n) => n.slice("remotes/".length))
+            .filter((n) => !local.includes(n.slice(n.indexOf("/") + 1)));
+        return { current: branches.current, local, remoteOnly };
+    }
+
+    /** Refuse names git could mistake for an option */
+    private assertRefName(name: string): void {
+        if (!name || name.startsWith("-")) throw new Error(`Invalid branch name "${name}".`);
+    }
+
+    /** Checkout a local branch, or create a tracking branch from a "remote/name" ref */
+    async checkout(folderPath: string, branch: string, track = false): Promise<void> {
+        this.assertRefName(branch);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () =>
+            track ? instance.git.raw(["checkout", "--track", branch]) : instance.git.checkout(branch)
+        );
+    }
+
+    /** Create a branch from HEAD and switch to it */
+    async createBranch(folderPath: string, name: string): Promise<void> {
+        this.assertRefName(name);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            try {
+                await instance.git.raw(["check-ref-format", "--branch", name]);
+            } catch {
+                throw new Error(`"${name}" is not a valid branch name.`);
+            }
+            await instance.git.raw(["checkout", "-b", name]);
+        });
+    }
+
+    /** Delete a local branch. Without `force`, git refuses branches that are not fully merged. */
+    async deleteBranch(folderPath: string, name: string, force = false): Promise<void> {
+        this.assertRefName(name);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () =>
+            instance.git.raw(["branch", force ? "-D" : "-d", "--", name])
+        );
+    }
+
+    /** Merge a branch into the current one. Conflicts leave the merge in progress and throw. */
+    async mergeBranch(folderPath: string, name: string): Promise<void> {
+        this.assertRefName(name);
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            await instance.git.merge([name, "--no-edit"]);
+        });
+    }
+
+    async abortMerge(folderPath: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => instance.git.raw(["merge", "--abort"]));
+    }
+
+    // ─── Stash ──────────────────────────────────────────────────────────────
+
+    /** Stash tracked and untracked changes. Throws when there is nothing to stash. */
+    async stashPush(folderPath: string, message: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            const args = ["stash", "push", "--include-untracked"];
+            if (message) args.push("-m", message);
+            const out = await instance.git.raw(args);
+            if (/no local changes/i.test(out)) throw new Error("No local changes to stash.");
+        });
+    }
+
+    async stashList(folderPath: string): Promise<StashEntry[]> {
+        const instance = this.require(folderPath);
+        const out = await instance.git.raw(["stash", "list", "--format=%gs%x1f%cI"]);
+        return out
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map((line, index) => {
+                const [subject, date] = line.split("\x1f");
+                // "On main: my note" / "WIP on main: abc123 subject" -> drop the branch prefix for readability
+                return { index, message: subject.replace(/^(WIP on|On) [^:]*: /, ""), date: date ?? "" };
+            });
+    }
+
+    /** Apply (keeping the stash), pop (apply then drop) or drop a stash entry */
+    async stashOperate(folderPath: string, op: "apply" | "pop" | "drop", index: number): Promise<void> {
+        if (!Number.isInteger(index) || index < 0) throw new Error("Invalid stash index.");
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () => instance.git.raw(["stash", op, `stash@{${index}}`]));
+    }
+
+    // ─── Rewriting the last commit ──────────────────────────────────────────
+
+    async getLastCommitMessage(folderPath: string): Promise<string> {
+        const instance = this.require(folderPath);
+        return (await instance.git.raw(["log", "-1", "--format=%B"])).trim();
+    }
+
+    /** Replace the last commit: new message plus anything currently staged */
+    async amendLastCommit(folderPath: string, message: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            if (!(await this.hasCommits(instance.git))) throw new Error("No commits to amend.");
+            await instance.git.raw(["commit", "--amend", "-m", message]);
+        });
+    }
+
+    /** Undo the last commit but keep its changes staged */
+    async undoLastCommit(folderPath: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            try {
+                await instance.git.raw(["rev-parse", "--verify", "-q", "HEAD~1"]);
+            } catch {
+                throw new Error("There is no earlier commit to go back to.");
+            }
+            await instance.git.raw(["reset", "--soft", "HEAD~1"]);
+        });
+    }
+
+    // ─── Conflicts ──────────────────────────────────────────────────────────
+
+    /** Resolve a conflicted file by taking one side wholesale, then stage it */
+    async resolveConflict(folderPath: string, file: string, side: ConflictSide): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, async () => {
+            await instance.git.raw(["checkout", `--${side}`, "--", file]);
+            await instance.git.add(["--", file]);
+        });
     }
 
     /** Init a new git repo in a folder */

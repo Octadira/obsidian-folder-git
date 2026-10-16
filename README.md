@@ -15,7 +15,10 @@
   - Commit staged changes, or stage everything and commit in one click. Press `Ctrl/Cmd+Enter` to commit. An empty message falls back to the repository's commit template.
   - Push, pull, **sync** (pull then push) and fetch. The first push sets the upstream branch automatically.
   - Colored diffs for working-tree and staged changes.
-  - Mark merge conflicts as resolved.
+  - Resolve merge conflicts: keep your version or the incoming one per file (with confirmation), or edit the file and mark it as resolved. A banner shows while a merge is in progress and lets you abort it.
+- **Branches.** Click the branch name to switch. The **⋯** menu and command palette also create, merge and delete branches. Remote-only branches can be checked out as tracking branches. Deleting a branch that is not fully merged asks before forcing it.
+- **Stash.** Stash all changes (untracked files included) with an optional note. Stashes are listed in the panel with *apply*, *pop* and *delete*.
+- **Fix the last commit.** *Amend last commit* changes its message and adds whatever is staged. *Undo last commit* moves it back to the staged area. Both warn when the commit was already pushed.
 - **History view.** Browse commits per repository, 50 at a time with *Load older commits*, and open the diff of any file changed in a commit. Limit it to a single file (renames are followed) from the file's context menu or the *Open history of current file* command. In an expanded commit, *Restore this version* puts a file back to how it was in that commit (left unstaged so you can review it).
 - **Status bar.** Branch, ahead/behind counts and pending changes of the current repository. Click it to open Source Control. It turns red when the last push, pull, sync or auto-commit failed.
 - **Sync errors.** A failed push, pull, sync or background auto-commit/auto-push is shown as a warning on the repository in the Source Control panel, with the error message, until the next success. Background failures notify once, not on every interval.
@@ -75,6 +78,7 @@ Open it from the ribbon icon or with **Folder Git: Open source control**.
 | Open source control | Open the Source Control panel |
 | Open Git history | Open the History view for a repository |
 | Open history of current file | Open the History view limited to the file you are editing |
+| Switch branch / New branch / Stash changes (active repo) | Branch and stash actions from the command palette |
 | Add folder repository | Start tracking a folder |
 | Commit (active repo) | Focus the commit message box |
 | Commit all changes with default message (active repo) | Stage everything and commit using the template (and push if auto-push is on) |
@@ -177,8 +181,9 @@ If that file was ever synced, backed up or committed, **revoke the old token** a
 ## Limitations
 
 - Desktop only. Git runs as an external process, which Obsidian mobile does not support.
-- There is no UI for branches. The plugin works on the current branch; use Git in a terminal to create or switch branches.
-- Merge conflicts are resolved by editing the files. The plugin can only mark them as resolved (stage).
+- Conflicts are resolved per file: keep one side wholesale, or edit the file yourself and mark it as resolved. There is no side-by-side merge editor. If your Git is configured to pull with rebase, *my version* and *incoming version* swap meaning during the rebase.
+- Amending or undoing a commit that was already pushed needs a force push, which the plugin does not do; use a terminal.
+- Branch rename, rebase, tags and partial (per-hunk) staging are not available.
 - Restoring a file from before it was renamed recreates it at its old path.
 - Tokens can be stored for one GitHub account and one Forgejo instance. Other HTTPS hosts rely on your system's Git credential setup.
 

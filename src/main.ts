@@ -18,6 +18,7 @@ import { AddRepoModal } from "./modals/addRepoModal";
 import { GitignoreModal } from "./modals/gitignoreModal";
 import { pickRepo } from "./modals/repoSuggestModal";
 import { FolderGitSettingsTab } from "./settingsTab";
+import { switchBranch, createBranch, stashChanges } from "./actions";
 
 const ACTION_LABELS: Record<RepoAction, { running: string; done: string; failed: string }> = {
     push: { running: "Pushing...", done: "Push successful.", failed: "Push failed" },
@@ -165,6 +166,29 @@ export default class FolderGitPlugin extends Plugin {
                     void (async () => {
                         const folderPath = await this.resolveTargetRepo();
                         if (folderPath !== null) await this.runRepoAction(action, folderPath);
+                    })();
+                },
+            });
+        }
+
+        const interactive: [string, string, (plugin: FolderGitPlugin, folderPath: string) => Promise<void>][] = [
+            ["switch-branch-active-repo", "Switch branch (active repo)", switchBranch],
+            ["new-branch-active-repo", "New branch (active repo)", createBranch],
+            ["stash-active-repo", "Stash changes (active repo)", stashChanges],
+        ];
+        for (const [id, name, run] of interactive) {
+            this.addCommand({
+                id,
+                name,
+                callback: () => {
+                    void (async () => {
+                        const folderPath = await this.resolveTargetRepo();
+                        if (folderPath === null) return;
+                        try {
+                            await run(this, folderPath);
+                        } catch (e) {
+                            new Notice(`${name} failed: ${(e as Error).message}`);
+                        }
                     })();
                 },
             });

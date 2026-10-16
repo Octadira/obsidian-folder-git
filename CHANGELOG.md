@@ -1,6 +1,15 @@
 # Changelog
 
-## 1.2.0 (unreleased)
+## 1.3.0
+
+### Added
+- Branches: click the branch name to switch, or use the **⋯** menu / command palette to create, merge and delete branches. Remote-only branches are listed and checked out as tracking branches.
+- Stash: stash changes (including untracked files) with an optional note; a *Stashes* section lists them with apply, pop and delete.
+- *Amend last commit* and *Undo last commit* (soft reset), with a warning when the commit was already pushed.
+- Conflicts: *Keep my version* and *Keep incoming version* per file, a "Merge in progress" banner and *Abort merge*.
+- Commands: *Switch branch*, *New branch* and *Stash changes* for the active repository.
+
+## 1.2.0
 
 ### Added
 - Status bar item with the current repository's branch, ahead/behind counts and pending changes. Click to open Source Control.

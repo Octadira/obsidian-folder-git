@@ -161,7 +161,19 @@ export interface RepoStatus {
     ahead: number;
     /** Commits behind remote */
     behind: number;
+    /** A merge is in progress (MERGE_HEAD exists) */
+    merging: boolean;
 }
+
+export interface StashEntry {
+    /** Position in the stash list (0 = newest) */
+    index: number;
+    message: string;
+    /** ISO date */
+    date: string;
+}
+
+export type ConflictSide = "ours" | "theirs";
 
 export interface GitLogEntry {
     hash: string;

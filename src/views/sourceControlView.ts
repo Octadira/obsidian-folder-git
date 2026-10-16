@@ -6,14 +6,26 @@ import {
     type RepoStatus,
     type FileStatusResult,
     type FolderGitPluginInterface,
+    type StashEntry,
+    type ConflictSide,
 } from "../types";
 import { ConfirmModal } from "../modals/confirmModal";
+import {
+    switchBranch,
+    createBranch,
+    deleteBranch,
+    mergeBranch,
+    stashChanges,
+    amendLastCommit,
+    undoLastCommit,
+} from "../actions";
 
 export class SourceControlView extends ItemView {
     plugin: FolderGitPluginInterface;
     private activeRepo: string = "";
     private status: RepoStatus | null = null;
     private statusError: string | null = null;
+    private stashes: StashEntry[] = [];
     private commitInput: HTMLTextAreaElement | null = null;
     /** Commit message drafts per repo — survive auto-refresh re-renders */
     private drafts: Map<string, string> = new Map();
@@ -65,9 +77,11 @@ export class SourceControlView extends ItemView {
 
         let status: RepoStatus | null = null;
         let error: string | null = null;
+        let stashes: StashEntry[] = [];
         if (paths.length > 0) {
             try {
                 status = await this.plugin.repoRegistry.getStatus(this.activeRepo);
+                stashes = await this.plugin.repoRegistry.stashList(this.activeRepo).catch(() => []);
             } catch (e) {
                 error = (e as Error).message;
             }
@@ -78,6 +92,7 @@ export class SourceControlView extends ItemView {
 
         this.status = status;
         this.statusError = error;
+        this.stashes = stashes;
         this.draw(paths);
     }
 
@@ -110,6 +125,7 @@ export class SourceControlView extends ItemView {
         if (!status) return;
 
         this.renderErrorBanner(container);
+        if (status.merging) this.renderMergeBanner(container);
         this.renderCommitArea(container);
 
         if (status.conflicted.length > 0) {
@@ -137,12 +153,58 @@ export class SourceControlView extends ItemView {
             container.createDiv("folder-git-no-changes").setText("No changes detected.");
         }
 
+        if (this.stashes.length > 0) {
+            this.renderStashSection(container, this.stashes);
+        }
+
         if (hadFocus && this.commitInput) {
             const input: HTMLTextAreaElement = this.commitInput;
             input.focus();
             input.setSelectionRange(selStart, selEnd);
         }
         container.scrollTop = scrollTop;
+    }
+
+    private renderMergeBanner(container: HTMLElement): void {
+        const banner = container.createDiv("folder-git-merge-banner");
+        const icon = banner.createSpan("folder-git-sync-error-icon");
+        setIcon(icon, "git-merge");
+        const body = banner.createDiv("folder-git-sync-error-body");
+        body.createDiv({ cls: "folder-git-sync-error-title", text: "Merge in progress" });
+        body.createDiv({
+            cls: "folder-git-sync-error-message",
+            text: "Resolve the conflicts below, then commit to finish the merge.",
+        });
+        const abort = banner.createEl("button", { text: "Abort", attr: { "aria-label": "Abort the merge" } });
+        abort.addEventListener("click", () => { void this.abortMerge(); });
+    }
+
+    private renderStashSection(container: HTMLElement, stashes: StashEntry[]): void {
+        const section = container.createDiv("folder-git-section");
+        this.renderSectionHeader(section, "Stashes", stashes.length);
+
+        const list = section.createDiv("folder-git-file-list");
+        for (const entry of stashes) {
+            const item = list.createDiv("folder-git-file-item");
+            const icon = item.createSpan("folder-git-stash-icon");
+            setIcon(icon, "archive");
+            item.createSpan({ cls: "folder-git-file-name", text: entry.message || `stash@{${entry.index}}` });
+            item.setAttr("aria-label", `stash@{${entry.index}}`);
+
+            const actions = item.createDiv("folder-git-file-actions");
+            this.createIconButton(actions, "trash", "Delete stash", (e) => {
+                e.stopPropagation();
+                void this.stashOperate(entry, "drop");
+            }).addClass("folder-git-discard-btn");
+            this.createIconButton(actions, "copy", "Apply (keep the stash)", (e) => {
+                e.stopPropagation();
+                void this.stashOperate(entry, "apply");
+            });
+            this.createIconButton(actions, "archive-restore", "Pop (apply and delete the stash)", (e) => {
+                e.stopPropagation();
+                void this.stashOperate(entry, "pop");
+            });
+        }
     }
 
     /** Banner for the last failed push/pull/sync/auto-commit of the active repo */
@@ -226,11 +288,15 @@ export class SourceControlView extends ItemView {
 
         // Branch badge
         if (this.status) {
-            const branchBadge = headerRow.createDiv("folder-git-branch-badge");
+            const branchBadge = headerRow.createDiv("folder-git-branch-badge folder-git-branch-badge-clickable");
             branchBadge.setAttr(
                 "aria-label",
-                this.status.tracking ? `Tracking ${this.status.tracking}` : "No upstream branch — push to publish"
+                (this.status.tracking ? `Tracking ${this.status.tracking}` : "No upstream branch — push to publish") +
+                " · click to switch branch"
             );
+            branchBadge.addEventListener("click", () => {
+                void this.runInteractive(switchBranch);
+            });
             const branchIcon = branchBadge.createSpan("folder-git-branch-icon");
             setIcon(branchIcon, "git-branch");
             branchBadge.createSpan({ text: this.status.branch });
@@ -263,6 +329,29 @@ export class SourceControlView extends ItemView {
             );
             menu.addItem((item) =>
                 item.setTitle("Edit .gitignore").setIcon("file-code").onClick(() => this.plugin.openGitignoreFile(this.activeRepo))
+            );
+            menu.addSeparator();
+            menu.addItem((item) =>
+                item.setTitle("Switch branch…").setIcon("git-branch").onClick(() => this.runInteractive(switchBranch))
+            );
+            menu.addItem((item) =>
+                item.setTitle("New branch…").setIcon("git-branch-plus").onClick(() => this.runInteractive(createBranch))
+            );
+            menu.addItem((item) =>
+                item.setTitle("Merge branch…").setIcon("git-merge").onClick(() => this.runInteractive(mergeBranch))
+            );
+            menu.addItem((item) =>
+                item.setTitle("Delete branch…").setIcon("trash").onClick(() => this.runInteractive(deleteBranch))
+            );
+            menu.addSeparator();
+            menu.addItem((item) =>
+                item.setTitle("Stash changes…").setIcon("archive").onClick(() => this.runInteractive(stashChanges))
+            );
+            menu.addItem((item) =>
+                item.setTitle("Amend last commit…").setIcon("pencil").onClick(() => this.runInteractive(amendLastCommit))
+            );
+            menu.addItem((item) =>
+                item.setTitle("Undo last commit…").setIcon("undo-2").onClick(() => this.runInteractive(undoLastCommit))
             );
             menu.addSeparator();
             menu.addItem((item) =>
@@ -503,6 +592,14 @@ export class SourceControlView extends ItemView {
             this.renderFileName(item, repoRelativePath);
 
             const itemActions = item.createDiv("folder-git-file-actions");
+            this.createIconButton(itemActions, "user", "Keep my version", (e) => {
+                e.stopPropagation();
+                void this.resolveConflict(repoRelativePath, "ours");
+            });
+            this.createIconButton(itemActions, "cloud-download", "Keep incoming version", (e) => {
+                e.stopPropagation();
+                void this.resolveConflict(repoRelativePath, "theirs");
+            });
             this.createIconButton(itemActions, "check", "Mark as resolved (stage)", (e) => {
                 e.stopPropagation();
                 void this.stagePaths([repoRelativePath], "resolve");
@@ -526,6 +623,65 @@ export class SourceControlView extends ItemView {
     }
 
     // ─── Actions ────────────────────────────────────────────────────────
+
+    /** Run a shared interactive action (branches, stash, amend…) on the active repo */
+    private async runInteractive(
+        action: (plugin: FolderGitPluginInterface, folderPath: string) => Promise<void>
+    ): Promise<void> {
+        try {
+            await action(this.plugin, this.activeRepo);
+        } catch (e) {
+            new Notice(`Failed: ${(e as Error).message}`);
+        }
+    }
+
+    private async resolveConflict(path: string, side: ConflictSide): Promise<void> {
+        const who = side === "ours" ? "your local version" : "the incoming version";
+        const ok = await new ConfirmModal(
+            this.app,
+            `Resolve "${path}" by keeping ${who}? The other side's changes to this file are discarded.`,
+            "Keep"
+        ).ask();
+        if (!ok) return;
+        try {
+            await this.plugin.repoRegistry.resolveConflict(this.activeRepo, path, side);
+        } catch (e) {
+            new Notice(`Failed to resolve "${path}": ${(e as Error).message}`);
+        }
+        await this.refresh();
+    }
+
+    private async abortMerge(): Promise<void> {
+        const ok = await new ConfirmModal(
+            this.app,
+            "Abort the merge? Everything you resolved so far is thrown away and the repository goes back to how it was before the merge.",
+            "Abort merge"
+        ).ask();
+        if (!ok) return;
+        try {
+            await this.plugin.repoRegistry.abortMerge(this.activeRepo);
+        } catch (e) {
+            new Notice(`Abort failed: ${(e as Error).message}`);
+        }
+        await this.refresh();
+    }
+
+    private async stashOperate(entry: StashEntry, op: "apply" | "pop" | "drop"): Promise<void> {
+        if (op === "drop") {
+            const ok = await new ConfirmModal(
+                this.app,
+                `Delete the stash "${entry.message}"? This cannot be undone.`,
+                "Delete"
+            ).ask();
+            if (!ok) return;
+        }
+        try {
+            await this.plugin.repoRegistry.stashOperate(this.activeRepo, op, entry.index);
+        } catch (e) {
+            new Notice(`Stash ${op} failed: ${(e as Error).message}`, 8000);
+        }
+        await this.refresh();
+    }
 
     async refresh(): Promise<void> {
         await this.plugin.refreshViews();

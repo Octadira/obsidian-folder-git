@@ -963,3 +963,47 @@
 .folder-git-commit-file-restore:focus-visible {
     opacity: 1;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Branches, stash, merge
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-branch-badge-clickable {
+    cursor: pointer;
+}
+
+.folder-git-branch-badge-clickable:hover {
+    background: var(--fg-hover);
+}
+
+.folder-git-merge-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 12px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--fg-orange);
+    border-radius: var(--fg-radius);
+    background: rgba(210, 153, 34, 0.08);
+}
+
+.folder-git-merge-banner .folder-git-sync-error-icon,
+.folder-git-merge-banner .folder-git-sync-error-title {
+    color: var(--fg-orange);
+}
+
+.folder-git-stash-icon {
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+}
+
+.folder-git-stash-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-prompt-input {
+    width: 100%;
+    margin-bottom: 12px;
+}
