@@ -285,7 +285,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
         // Commit message template
         new Setting(section)
             .setName("Commit message template")
-            .setDesc("Used by auto-commit and as the default message. Use {{date}} for current ISO date.")
+            .setDesc("Used by auto-commit and as the default message. Placeholders: {{date}}, {{time}}, {{repo}}, {{branch}}, {{files}}.")
             .addText((text) =>
                 text
                     .setValue(repo.commitMessageTemplate)

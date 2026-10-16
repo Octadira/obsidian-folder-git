@@ -1,12 +1,21 @@
 import { ItemView, WorkspaceLeaf, setIcon, Notice } from "obsidian";
 import type FolderGitPlugin from "../main";
 import { HISTORY_VIEW_TYPE, type GitLogEntry } from "../types";
+import { ConfirmModal } from "../modals/confirmModal";
+
+const PAGE_SIZE = 50;
 
 export class HistoryView extends ItemView {
     plugin: FolderGitPlugin;
     private activeRepo: string = "";
+    /** Repo-relative file the history is limited to ("" = whole repository) */
+    private fileFilter: string = "";
     private entries: GitLogEntry[] = [];
+    private hasMore = false;
+    private loadError: string | null = null;
     private expandedCommits: Set<string> = new Set();
+    /** Monotonic counter so a slow load never overwrites a newer one */
+    private loadSeq = 0;
 
     constructor(leaf: WorkspaceLeaf, plugin: FolderGitPlugin) {
         super(leaf);
@@ -30,17 +39,66 @@ export class HistoryView extends ItemView {
         if (paths.length > 0) {
             this.activeRepo = paths[0];
         }
-        await this.loadAndRender();
+        await this.reload();
     }
 
     async onClose(): Promise<void> { }
 
-    private async loadAndRender(): Promise<void> {
+    /** Fetch the first page of the log, then redraw */
+    private async reload(): Promise<void> {
+        const seq = ++this.loadSeq;
+        const paths = this.plugin.repoRegistry.getAllPaths();
+        if (paths.length > 0 && !paths.includes(this.activeRepo)) {
+            this.activeRepo = paths[0];
+            this.fileFilter = "";
+        }
+
+        this.entries = [];
+        this.hasMore = false;
+        this.loadError = null;
+        if (paths.length > 0) {
+            try {
+                const page = await this.fetchPage(0);
+                if (seq !== this.loadSeq) return;
+                this.entries = page.entries;
+                this.hasMore = page.hasMore;
+            } catch (e) {
+                if (seq !== this.loadSeq) return;
+                this.loadError = (e as Error).message;
+            }
+        }
+        this.draw();
+    }
+
+    /** Fetch and append the next page of older commits */
+    private async loadMore(): Promise<void> {
+        const seq = this.loadSeq;
+        try {
+            const page = await this.fetchPage(this.entries.length);
+            if (seq !== this.loadSeq) return;
+            this.entries = this.entries.concat(page.entries);
+            this.hasMore = page.hasMore;
+        } catch (e) {
+            new Notice(`Failed to load more commits: ${(e as Error).message}`);
+        }
+        this.draw();
+    }
+
+    /** One page of entries; asks for one extra commit to know whether more exist */
+    private async fetchPage(skip: number): Promise<{ entries: GitLogEntry[]; hasMore: boolean }> {
+        const log = await this.plugin.repoRegistry.getLog(this.activeRepo, PAGE_SIZE + 1, {
+            skip,
+            file: this.fileFilter || undefined,
+        });
+        return { entries: log.slice(0, PAGE_SIZE), hasMore: log.length > PAGE_SIZE };
+    }
+
+    private draw(): void {
         const container = this.containerEl.children[1] as HTMLElement;
+        const scrollTop = container.scrollTop;
         container.empty();
         container.addClass("folder-git-history");
 
-        // Header with repo selector
         this.renderHeader(container);
 
         const paths = this.plugin.repoRegistry.getAllPaths();
@@ -48,39 +106,43 @@ export class HistoryView extends ItemView {
             container.createDiv("folder-git-empty-state").setText("No repositories configured.");
             return;
         }
-        if (!paths.includes(this.activeRepo)) {
-            this.activeRepo = paths[0];
-        }
 
-        // Load log
-        try {
-            this.entries = await this.plugin.repoRegistry.getLog(this.activeRepo, 50);
-        } catch (e) {
-            container
-                .createDiv("folder-git-error")
-                .setText(`Error: ${(e as Error).message}`);
+        if (this.fileFilter) this.renderFileFilter(container);
+
+        if (this.loadError !== null) {
+            container.createDiv("folder-git-error").setText(`Error: ${this.loadError}`);
             return;
         }
 
         if (this.entries.length === 0) {
-            container.createDiv("folder-git-no-changes").setText("No commits yet.");
+            container
+                .createDiv("folder-git-no-changes")
+                .setText(this.fileFilter ? "No commits touch this file." : "No commits yet.");
             return;
         }
 
-        // Commit list
         const list = container.createDiv("folder-git-commit-list");
         for (const entry of this.entries) {
             this.renderCommitItem(list, entry);
         }
+
+        if (this.hasMore) {
+            const more = container.createEl("button", {
+                cls: "folder-git-load-more",
+                text: "Load older commits",
+            });
+            more.addEventListener("click", () => {
+                more.disabled = true;
+                void this.loadMore();
+            });
+        }
+        container.scrollTop = scrollTop;
     }
 
     private renderHeader(container: HTMLElement): void {
         const header = container.createDiv("folder-git-header");
 
         const paths = this.plugin.repoRegistry.getAllPaths();
-        if (paths.length > 0 && !paths.includes(this.activeRepo)) {
-            this.activeRepo = paths[0];
-        }
         if (paths.length > 0) {
             const selectorWrap = header.createDiv("folder-git-selector-wrap");
             const select = selectorWrap.createEl("select", {
@@ -96,11 +158,10 @@ export class HistoryView extends ItemView {
             }
 
             select.addEventListener("change", () => {
-                void (async () => {
-                    this.activeRepo = select.value;
-                    this.expandedCommits.clear();
-                    await this.loadAndRender();
-                })();
+                this.activeRepo = select.value;
+                this.fileFilter = "";
+                this.expandedCommits.clear();
+                void this.reload();
             });
         }
 
@@ -112,9 +173,25 @@ export class HistoryView extends ItemView {
         });
         setIcon(refreshBtn, "refresh-cw");
         refreshBtn.addEventListener("click", () => {
-            void (async () => {
-                await this.loadAndRender();
-            })();
+            void this.reload();
+        });
+    }
+
+    /** Chip showing the file the history is limited to, with a button to clear it */
+    private renderFileFilter(container: HTMLElement): void {
+        const chip = container.createDiv("folder-git-file-filter");
+        const icon = chip.createSpan("folder-git-file-filter-icon");
+        setIcon(icon, "file-clock");
+        chip.createSpan({ text: this.fileFilter, cls: "folder-git-file-filter-name" });
+        const clear = chip.createEl("button", {
+            cls: "folder-git-icon-btn",
+            attr: { "aria-label": "Show history of the whole repository" },
+        });
+        setIcon(clear, "x");
+        clear.addEventListener("click", () => {
+            this.fileFilter = "";
+            this.expandedCommits.clear();
+            void this.reload();
         });
     }
 
@@ -149,16 +226,14 @@ export class HistoryView extends ItemView {
             cls: "folder-git-commit-date",
         });
 
-        // Toggle expand on click
+        // Toggle expand on click (redraws from the loaded entries, no git call)
         row.addEventListener("click", () => {
-            void (async () => {
-                if (this.expandedCommits.has(entry.hash)) {
-                    this.expandedCommits.delete(entry.hash);
-                } else {
-                    this.expandedCommits.add(entry.hash);
-                }
-                await this.loadAndRender();
-            })();
+            if (this.expandedCommits.has(entry.hash)) {
+                this.expandedCommits.delete(entry.hash);
+            } else {
+                this.expandedCommits.add(entry.hash);
+            }
+            this.draw();
         });
 
         // Expanded: show files
@@ -173,21 +248,56 @@ export class HistoryView extends ItemView {
                 fileItem.addEventListener("click", () => {
                     void this.openCommitFileDiff(entry, file);
                 });
+
+                const restoreBtn = fileItem.createEl("button", {
+                    cls: "folder-git-icon-btn folder-git-commit-file-restore",
+                    attr: { "aria-label": "Restore this version" },
+                });
+                setIcon(restoreBtn, "rotate-ccw");
+                restoreBtn.addEventListener("click", (evt) => {
+                    evt.stopPropagation();
+                    void this.restoreFile(entry, file);
+                });
             }
         }
     }
 
-    private async openCommitFileDiff(entry: GitLogEntry, file: string): Promise<void> {
-        // `git log --stat` shows renames as "old => new"; diff the new path
-        const path = file.includes(" => ")
-            ? file.replace(/\{([^}]*) => ([^}]*)\}/, "$2").replace(/^.* => /, "")
+    /** `git log --stat` shows renames as "old => new"; the commit's version lives at the new path */
+    private resolveStatPath(file: string): string {
+        return file.includes(" => ")
+            ? file.replace(/\{([^}]*) => ([^}]*)\}/, "$2").replace(/^.* => /, "").replace(/\/\//g, "/")
             : file;
+    }
+
+    private async openCommitFileDiff(entry: GitLogEntry, file: string): Promise<void> {
+        const path = this.resolveStatPath(file);
         try {
             const diff = await this.plugin.repoRegistry.getCommitFileDiff(this.activeRepo, entry.hash, path);
             this.plugin.openDiffModal(`${path} @ ${entry.hashShort}`, diff);
         } catch (e) {
             new Notice(`Failed to load diff: ${(e as Error).message}`);
         }
+    }
+
+    /** Overwrite the working copy of a file with its version in `entry` (after confirmation) */
+    private async restoreFile(entry: GitLogEntry, file: string): Promise<void> {
+        const path = this.resolveStatPath(file);
+        const confirmed = await new ConfirmModal(
+            this.app,
+            `Replace "${path}" with its version from commit ${entry.hashShort}? ` +
+            "Unsaved or uncommitted changes to this file will be lost. " +
+            "The restored file is left unstaged so you can review it before committing.",
+            "Restore"
+        ).ask();
+        if (!confirmed) return;
+
+        try {
+            await this.plugin.repoRegistry.restoreFile(this.activeRepo, entry.hash, path);
+            new Notice(`Restored "${path}" from ${entry.hashShort}.`);
+        } catch (e) {
+            new Notice(`Restore failed: ${(e as Error).message}`);
+        }
+        await this.plugin.refreshViews();
     }
 
     private formatDate(dateStr: string): string {
@@ -209,9 +319,11 @@ export class HistoryView extends ItemView {
         }
     }
 
-    async setActiveRepo(folderPath: string): Promise<void> {
+    /** Show a repo's history, optionally limited to one file (path relative to the repo root) */
+    async setActiveRepo(folderPath: string, file?: string): Promise<void> {
         this.activeRepo = folderPath;
+        this.fileFilter = file ?? "";
         this.expandedCommits.clear();
-        await this.loadAndRender();
+        await this.reload();
     }
 }

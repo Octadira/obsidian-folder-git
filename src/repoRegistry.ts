@@ -9,6 +9,8 @@ import {
     type FileStatusResult,
     type FileChangeType,
     type GitLogEntry,
+    type CommitMessage,
+    type RepoError,
     type FolderGitPluginInterface,
 } from "./types";
 import { findAccountForRemote } from "./hosting/hostingService";
@@ -53,6 +55,8 @@ export class RepoRegistry {
     private plugin: FolderGitPluginInterface;
     /** Per-repo promise chain so mutating/network operations never overlap */
     private queues: Map<string, Promise<unknown>> = new Map();
+    /** Last unresolved failure per repo (auto-commit/push, manual push/pull/sync) */
+    private errors: Map<string, RepoError> = new Map();
 
     constructor(plugin: FolderGitPluginInterface) {
         this.plugin = plugin;
@@ -205,6 +209,7 @@ export class RepoRegistry {
             window.clearInterval(instance.autoCommitTimer);
         }
         this.repos.delete(folderPath);
+        this.errors.delete(folderPath);
     }
 
     /** (Re)start the auto-commit timer after the interval setting changed */
@@ -372,16 +377,41 @@ export class RepoRegistry {
         });
     }
 
-    /** Stage everything and commit */
-    async commitAll(folderPath: string, message: string): Promise<boolean> {
+    /** Stage everything and commit. A function message is rendered once the files and branch are known. */
+    async commitAll(folderPath: string, message: CommitMessage): Promise<boolean> {
         const instance = this.require(folderPath);
         return this.exclusive(folderPath, async () => {
             await instance.git.add(["-A", "."]);
             const status = await instance.git.status();
             if (status.isClean()) return false;
-            await instance.git.commit(message);
+            const text = typeof message === "string"
+                ? message
+                : message({
+                    repo: folderPath || this.plugin.app.vault.getName(),
+                    branch: status.current || "HEAD",
+                    files: status.files.length,
+                });
+            await instance.git.commit(text);
             return true;
         });
+    }
+
+    // ─── Last error per repo ────────────────────────────────────────────────
+
+    /** Last failure that has not been followed by a success, if any */
+    getError(folderPath: string): RepoError | undefined {
+        return this.errors.get(folderPath);
+    }
+
+    /** Record a failure. Returns true when it differs from the one already recorded. */
+    setError(folderPath: string, action: RepoError["action"], message: string): boolean {
+        const previous = this.errors.get(folderPath);
+        this.errors.set(folderPath, { action, message, time: Date.now() });
+        return previous?.message !== message;
+    }
+
+    clearError(folderPath: string): void {
+        this.errors.delete(folderPath);
     }
 
     /** Get diff for a specific file (working tree vs index, or index vs HEAD) */
@@ -397,14 +427,32 @@ export class RepoRegistry {
         return await instance.git.show(["--format=", hash, "--", file]);
     }
 
-    /** Get commit log */
-    async getLog(folderPath: string, limit: number = 50): Promise<GitLogEntry[]> {
+    /** Replace a file's working copy with its version in a commit (left unstaged) */
+    async restoreFile(folderPath: string, hash: string, file: string): Promise<void> {
+        const instance = this.require(folderPath);
+        await this.exclusive(folderPath, () =>
+            instance.git.raw(["restore", `--source=${hash}`, "--worktree", "--", file])
+        );
+    }
+
+    /**
+     * Get commit log, newest first.
+     * `skip` pages through older commits; `file` (repo-relative) limits it to commits touching
+     * that file, following renames.
+     */
+    async getLog(
+        folderPath: string,
+        limit: number = 50,
+        options: { skip?: number; file?: string } = {}
+    ): Promise<GitLogEntry[]> {
         const instance = this.require(folderPath);
         if (!(await this.hasCommits(instance.git))) return [];
 
         const log = await instance.git.log({
             maxCount: limit,
             "--stat": null,
+            ...(options.skip ? { "--skip": options.skip } : {}),
+            ...(options.file ? { file: options.file, "--follow": null } : {}),
         });
 
         interface DiffLogEntry {
@@ -744,16 +792,28 @@ export class RepoRegistry {
         const instance = this.repos.get(folderPath);
         if (!instance) return;
 
+        let action: RepoError["action"] = "commit";
         try {
             const committed = await this.commitAll(
                 folderPath,
-                renderCommitMessage(instance.config.commitMessageTemplate)
+                (ctx) => renderCommitMessage(instance.config.commitMessageTemplate, ctx)
             );
             if (committed && instance.config.autoPush) {
+                action = "push";
                 await this.push(folderPath);
             }
+            // A commit that succeeded without pushing must not hide an earlier push failure
+            if (action === "push" || this.errors.get(folderPath)?.action === "commit") {
+                this.clearError(folderPath);
+            }
         } catch (e) {
-            new Notice(`Folder Git: auto-commit failed for "${folderPath || "vault root"}": ${(e as Error).message}`);
+            const message = (e as Error).message;
+            // Notify once per distinct failure so a persistent problem does not nag every interval
+            if (this.setError(folderPath, action, message)) {
+                new Notice(`Folder Git: auto-${action} failed for "${folderPath || "vault root"}": ${message}`);
+            }
+        } finally {
+            void this.plugin.refreshViews();
         }
     }
 

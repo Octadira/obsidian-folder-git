@@ -109,6 +109,7 @@ export class SourceControlView extends ItemView {
         const status = this.status;
         if (!status) return;
 
+        this.renderErrorBanner(container);
         this.renderCommitArea(container);
 
         if (status.conflicted.length > 0) {
@@ -144,6 +145,32 @@ export class SourceControlView extends ItemView {
         container.scrollTop = scrollTop;
     }
 
+    /** Banner for the last failed push/pull/sync/auto-commit of the active repo */
+    private renderErrorBanner(container: HTMLElement): void {
+        const error = this.plugin.repoRegistry.getError(this.activeRepo);
+        if (!error) return;
+
+        const banner = container.createDiv("folder-git-sync-error");
+        const icon = banner.createSpan("folder-git-sync-error-icon");
+        setIcon(icon, "alert-triangle");
+        const body = banner.createDiv("folder-git-sync-error-body");
+        body.createDiv({
+            cls: "folder-git-sync-error-title",
+            text: `${error.action === "commit" ? "Auto-commit" : error.action.charAt(0).toUpperCase() + error.action.slice(1)} failed`,
+        });
+        body.createDiv({ cls: "folder-git-sync-error-message", text: error.message });
+
+        const dismiss = banner.createEl("button", {
+            cls: "folder-git-icon-btn",
+            attr: { "aria-label": "Dismiss" },
+        });
+        setIcon(dismiss, "x");
+        dismiss.addEventListener("click", () => {
+            this.plugin.repoRegistry.clearError(this.activeRepo);
+            void this.plugin.refreshViews();
+        });
+    }
+
     // ─── Header ─────────────────────────────────────────────────────────
 
     private renderHeader(container: HTMLElement, paths: string[]): void {
@@ -177,6 +204,13 @@ export class SourceControlView extends ItemView {
                 setIcon(repoIcon, "folder-git-2");
 
                 repoItem.createSpan({ cls: "folder-git-repo-name", text: p || "(vault root)" });
+
+                const repoError = this.plugin.repoRegistry.getError(p);
+                if (repoError) {
+                    const errIcon = repoItem.createSpan("folder-git-repo-error-icon");
+                    errIcon.setAttr("aria-label", `${repoError.action} failed: ${repoError.message}`);
+                    setIcon(errIcon, "alert-triangle");
+                }
 
                 if (changeCount > 0) {
                     repoItem.createSpan({ cls: "folder-git-repo-change-count", text: String(changeCount) });
@@ -561,7 +595,19 @@ export class SourceControlView extends ItemView {
         const typed = this.commitInput?.value?.trim();
         if (typed) return typed;
         const repo = this.plugin.repoRegistry.getRepo(this.activeRepo);
-        return renderCommitMessage(repo?.config.commitMessageTemplate ?? "");
+        return renderCommitMessage(repo?.config.commitMessageTemplate ?? "", {
+            repo: this.activeRepo || this.app.vault.getName(),
+            branch: this.status?.branch ?? "",
+            files: (this.status?.staged.length ?? 0) || this.pendingFileCount(),
+        });
+    }
+
+    /** Files a "commit all" would include */
+    private pendingFileCount(): number {
+        const s = this.status;
+        if (!s) return 0;
+        const names = new Set([...s.staged.map((f) => f.path), ...s.changed.map((f) => f.path)]);
+        return names.size + s.untracked.length + s.conflicted.length;
     }
 
     private clearDraft(): void {

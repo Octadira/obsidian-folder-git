@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 (unreleased)
+
+### Added
+- Status bar item with the current repository's branch, ahead/behind counts and pending changes. Click to open Source Control.
+- Failed push, pull, sync and auto-commit/auto-push are kept per repository and shown as a warning in the repository list, a banner in Source Control and a red status bar item, until the next success. Background failures notify once per distinct error instead of on every interval.
+- History: *Load older commits* pages through the full log, 50 commits at a time.
+- History of a single file (follows renames) from the file context menu or the *Open history of current file* command.
+- *Restore this version* on files in an expanded commit, with confirmation. The file is restored to the working tree and left unstaged.
+- Commit message template placeholders `{{time}}`, `{{repo}}`, `{{branch}}` and `{{files}}`, in addition to `{{date}}`.
+
+### Changed
+- Expanding a commit in History no longer re-runs `git log`.
+
 ## 1.1.3
 
 ### Security

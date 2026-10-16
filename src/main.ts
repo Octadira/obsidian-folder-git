@@ -1,4 +1,4 @@
-import { Plugin, TFolder, TAbstractFile, Menu, Notice } from "obsidian";
+import { Plugin, TFile, TFolder, TAbstractFile, Menu, Notice, setIcon } from "obsidian";
 import {
     type PluginSettings,
     type RepoStatus,
@@ -30,6 +30,7 @@ export default class FolderGitPlugin extends Plugin {
     settings: PluginSettings;
     repoRegistry: RepoRegistry;
     private ribbonIconEl: HTMLElement | null = null;
+    private statusBarEl: HTMLElement | null = null;
     /** Cached statuses from the last poll, keyed by folderPath */
     cachedStatuses: Map<string, RepoStatus> = new Map();
     private refreshTimer: number | null = null;
@@ -48,6 +49,19 @@ export default class FolderGitPlugin extends Plugin {
             void this.activateSourceControlView();
         });
         this.ribbonIconEl.addClass("folder-git-ribbon-icon");
+
+        // Status bar (desktop only, like the whole plugin)
+        this.statusBarEl = this.addStatusBarItem();
+        this.statusBarEl.addClass("folder-git-status-bar", "folder-git-hidden");
+        this.statusBarEl.addEventListener("click", () => {
+            const folderPath = this.getStatusBarRepo();
+            if (folderPath === null) return;
+            void (async () => {
+                await this.activateSourceControlView();
+                await this.getSourceControlView()?.setActiveRepo(folderPath);
+            })();
+        });
+        this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateStatusBar()));
 
         this.registerCommands();
         this.registerFileMenu();
@@ -87,6 +101,17 @@ export default class FolderGitPlugin extends Plugin {
                     const folderPath = await this.resolveTargetRepo();
                     if (folderPath !== null) await this.openHistory(folderPath);
                 })();
+            },
+        });
+
+        this.addCommand({
+            id: "open-file-history",
+            name: "Open history of current file",
+            checkCallback: (checking) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file || !this.repoRegistry.getRepoForFile(file.path)) return false;
+                if (!checking) void this.openFileHistory(file.path);
+                return true;
             },
         });
 
@@ -188,6 +213,15 @@ export default class FolderGitPlugin extends Plugin {
                 const relativePath = repoRoot && filePath.startsWith(repoRoot + "/")
                     ? filePath.slice(repoRoot.length + 1)
                     : filePath;
+
+                if (file instanceof TFile) {
+                    menu.addItem((item) =>
+                        item
+                            .setTitle("Git: file history")
+                            .setIcon("history")
+                            .onClick(() => this.openFileHistory(filePath))
+                    );
+                }
 
                 if (this.repoRegistry.checkExplicitlyIgnored(repoRoot, relativePath)) {
                     menu.addItem((item) =>
@@ -304,9 +338,22 @@ export default class FolderGitPlugin extends Plugin {
         }
     }
 
-    async openHistory(folderPath: string): Promise<void> {
+    /** Open the history view for a repo, optionally limited to one file (path relative to the repo root) */
+    async openHistory(folderPath: string, file?: string): Promise<void> {
         await this.activateHistoryView();
-        await this.getHistoryView()?.setActiveRepo(folderPath);
+        await this.getHistoryView()?.setActiveRepo(folderPath, file);
+    }
+
+    /** Open the history of a vault file that lives inside a configured repo */
+    private async openFileHistory(vaultPath: string): Promise<void> {
+        const repo = this.repoRegistry.getRepoForFile(vaultPath);
+        if (!repo) {
+            new Notice("This file is not inside a Git repository.");
+            return;
+        }
+        const root = repo.config.folderPath;
+        const relative = root && vaultPath.startsWith(root + "/") ? vaultPath.slice(root.length + 1) : vaultPath;
+        await this.openHistory(root, relative);
     }
 
     private getSourceControlView(): SourceControlView | null {
@@ -361,10 +408,14 @@ export default class FolderGitPlugin extends Plugin {
         const progress = new Notice(`${labels.running} (${repoLabel})`, 0);
         try {
             await this.repoRegistry[action](folderPath);
+            // A fetch proves little about whether a failed push/pull is fixed
+            if (action !== "fetch") this.repoRegistry.clearError(folderPath);
             new Notice(`${labels.done} (${repoLabel})`);
             return true;
         } catch (e) {
-            new Notice(`${labels.failed} (${repoLabel}): ${(e as Error).message}`, 8000);
+            const message = (e as Error).message;
+            if (action !== "fetch") this.repoRegistry.setError(folderPath, action, message);
+            new Notice(`${labels.failed} (${repoLabel}): ${message}`, 8000);
             return false;
         } finally {
             progress.hide();
@@ -379,7 +430,7 @@ export default class FolderGitPlugin extends Plugin {
         try {
             const committed = await this.repoRegistry.commitAll(
                 folderPath,
-                renderCommitMessage(repo.config.commitMessageTemplate)
+                (ctx) => renderCommitMessage(repo.config.commitMessageTemplate, ctx)
             );
             if (!committed) {
                 new Notice("Nothing to commit.");
@@ -461,6 +512,7 @@ export default class FolderGitPlugin extends Plugin {
         });
 
         this.cachedStatuses = newStatuses;
+        this.updateStatusBar();
 
         if (!this.ribbonIconEl) return;
 
@@ -469,6 +521,53 @@ export default class FolderGitPlugin extends Plugin {
         if (totalChanges > 0) {
             const badge = this.ribbonIconEl.createSpan({ cls: "folder-git-badge" });
             badge.setText(totalChanges > 99 ? "99+" : String(totalChanges));
+        }
+    }
+
+    /** The repo the status bar describes: active file's repo, else the one open in source control, else the first */
+    private getStatusBarRepo(): string | null {
+        const paths = this.repoRegistry.getAllPaths();
+        if (paths.length === 0) return null;
+        const activeFile = this.app.workspace.getActiveFile();
+        const fileRepo = activeFile ? this.repoRegistry.getRepoForFile(activeFile.path) : undefined;
+        if (fileRepo) return fileRepo.config.folderPath;
+        const viewRepo = this.getSourceControlView()?.currentFolderPath;
+        if (viewRepo !== undefined && paths.includes(viewRepo)) return viewRepo;
+        return paths[0];
+    }
+
+    /** Show branch, ahead/behind, pending changes and any sync error for the current repo */
+    updateStatusBar(): void {
+        const el = this.statusBarEl;
+        if (!el) return;
+        el.empty();
+        el.removeClass("folder-git-status-bar-error");
+
+        const folderPath = this.getStatusBarRepo();
+        const status = folderPath === null ? undefined : this.cachedStatuses.get(folderPath);
+        if (folderPath === null || !status) {
+            el.addClass("folder-git-hidden");
+            return;
+        }
+        el.removeClass("folder-git-hidden");
+
+        const error = this.repoRegistry.getError(folderPath);
+        const changes = status.staged.length + status.changed.length + status.untracked.length + status.conflicted.length;
+        const icon = el.createSpan("folder-git-status-bar-icon");
+        setIcon(icon, error ? "alert-triangle" : "git-branch");
+
+        let text = status.branch;
+        if (status.ahead > 0) text += ` ↑${status.ahead}`;
+        if (status.behind > 0) text += ` ↓${status.behind}`;
+        if (changes > 0) text += ` ●${changes}`;
+        el.createSpan({ text });
+
+        const repoLabel = folderPath || "vault root";
+        if (error) {
+            el.addClass("folder-git-status-bar-error");
+            el.setAttr("aria-label", `${repoLabel}: ${error.action} failed — ${error.message}`);
+        } else {
+            el.setAttr("aria-label", `${repoLabel}: ${changes} pending change${changes === 1 ? "" : "s"}`);
         }
     }
 

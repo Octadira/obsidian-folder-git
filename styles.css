@@ -825,3 +825,141 @@
     font-size: 12px;
     resize: vertical;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Status bar, sync errors, history extras
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.folder-git-hidden {
+    display: none;
+}
+
+.folder-git-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.folder-git-status-bar-icon {
+    display: flex;
+    align-items: center;
+}
+
+.folder-git-status-bar-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-status-bar-error {
+    color: var(--fg-red);
+}
+
+.folder-git-repo-error-icon {
+    display: flex;
+    align-items: center;
+    color: var(--fg-red);
+    flex-shrink: 0;
+}
+
+.folder-git-repo-error-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-sync-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 8px 12px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--fg-red);
+    border-radius: var(--fg-radius);
+    background: rgba(248, 81, 73, 0.08);
+}
+
+.folder-git-sync-error-icon {
+    display: flex;
+    color: var(--fg-red);
+    padding-top: 1px;
+}
+
+.folder-git-sync-error-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.folder-git-sync-error-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.folder-git-sync-error-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg-red);
+}
+
+.folder-git-sync-error-message {
+    font-size: 11px;
+    color: var(--text-muted);
+    word-break: break-word;
+    user-select: text;
+}
+
+.folder-git-file-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 12px 0;
+    padding: 4px 8px;
+    border: 1px solid var(--fg-border);
+    border-radius: var(--fg-radius);
+    font-size: 12px;
+}
+
+.folder-git-file-filter-icon {
+    display: flex;
+    color: var(--text-muted);
+}
+
+.folder-git-file-filter-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.folder-git-file-filter-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-family: var(--font-monospace);
+    font-size: 11px;
+}
+
+.folder-git-load-more {
+    display: block;
+    margin: 8px auto 12px;
+}
+
+.folder-git-commit-file-item {
+    cursor: pointer;
+}
+
+.folder-git-commit-file-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.folder-git-commit-file-restore {
+    opacity: 0;
+    flex-shrink: 0;
+}
+
+.folder-git-commit-file-item:hover .folder-git-commit-file-restore,
+.folder-git-commit-file-restore:focus-visible {
+    opacity: 1;
+}

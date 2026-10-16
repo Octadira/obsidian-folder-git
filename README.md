@@ -16,7 +16,9 @@
   - Push, pull, **sync** (pull then push) and fetch. The first push sets the upstream branch automatically.
   - Colored diffs for working-tree and staged changes.
   - Mark merge conflicts as resolved.
-- **History view.** Browse recent commits per repository and open the diff of any file changed in a commit.
+- **History view.** Browse commits per repository, 50 at a time with *Load older commits*, and open the diff of any file changed in a commit. Limit it to a single file (renames are followed) from the file's context menu or the *Open history of current file* command. In an expanded commit, *Restore this version* puts a file back to how it was in that commit (left unstaged so you can review it).
+- **Status bar.** Branch, ahead/behind counts and pending changes of the current repository. Click it to open Source Control. It turns red when the last push, pull, sync or auto-commit failed.
+- **Sync errors.** A failed push, pull, sync or background auto-commit/auto-push is shown as a warning on the repository in the Source Control panel, with the error message, until the next success. Background failures notify once, not on every interval.
 - **GitHub and Forgejo integration.**
   - Validate an access token and see which account is connected.
   - Create a new remote repository while adding a folder: under your account or one of your organizations, private or public.
@@ -72,6 +74,7 @@ Open it from the ribbon icon or with **Folder Git: Open source control**.
 | --- | --- |
 | Open source control | Open the Source Control panel |
 | Open Git history | Open the History view for a repository |
+| Open history of current file | Open the History view limited to the file you are editing |
 | Add folder repository | Start tracking a folder |
 | Commit (active repo) | Focus the commit message box |
 | Commit all changes with default message (active repo) | Stage everything and commit using the template (and push if auto-push is on) |
@@ -97,7 +100,7 @@ The *active repo* is the one containing the file you are editing. Otherwise it i
 | Remote URL | Applied to the repository's remote when you leave the field. |
 | Auto-push after commit | Push after every commit made from the plugin, manual or automatic. On by default when the repository has a remote. |
 | Auto-commit interval | Minutes between automatic *stage all + commit*. `0` disables it. |
-| Commit message template | Used by auto-commit and when the commit message is empty. `{{date}}` becomes the current ISO date. |
+| Commit message template | Used by auto-commit and when the commit message is empty. Placeholders: `{{date}}` (ISO date), `{{time}}` (local HH:MM), `{{repo}}` (folder, or the vault name for the vault root), `{{branch}}` and `{{files}}` (number of files in the commit). |
 | Remove | Stops tracking the folder. The `.git` folder and your files are left untouched. |
 
 ## Authentication
@@ -176,7 +179,7 @@ If that file was ever synced, backed up or committed, **revoke the old token** a
 - Desktop only. Git runs as an external process, which Obsidian mobile does not support.
 - There is no UI for branches. The plugin works on the current branch; use Git in a terminal to create or switch branches.
 - Merge conflicts are resolved by editing the files. The plugin can only mark them as resolved (stage).
-- The History view shows the last 50 commits.
+- Restoring a file from before it was renamed recreates it at its old path.
 - Tokens can be stored for one GitHub account and one Forgejo instance. Other HTTPS hosts rely on your system's Git credential setup.
 
 ## Contributing

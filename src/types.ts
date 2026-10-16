@@ -16,7 +16,7 @@ export interface FolderRepoConfig {
     autoPush: boolean;
     /** Auto-commit interval in minutes (0 = disabled) */
     autoCommitInterval: number;
-    /** Default commit message template. {{date}} is replaced with ISO date */
+    /** Default commit message template. Placeholders: {{date}}, {{time}}, {{repo}}, {{branch}}, {{files}} */
     commitMessageTemplate: string;
     /** Hosting provider the remote repo was created on via the plugin ("" = none/unknown) */
     hostingProvider: HostingProviderId | "";
@@ -59,7 +59,15 @@ export interface FolderGitPluginInterface extends Plugin {
     openAddRepoModal(initialFolderPath?: string, onDone?: () => void): void;
     openDiffModal(filePath: string, diffContent: string): void;
     openGitignoreFile(folderPath: string): void;
-    openHistory(folderPath: string): Promise<void>;
+    openHistory(folderPath: string, file?: string): Promise<void>;
+}
+
+/** Last failed network/auto operation for a repo, shown until the next success */
+export interface RepoError {
+    action: RepoAction | "commit";
+    message: string;
+    /** Epoch milliseconds */
+    time: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -85,9 +93,35 @@ export const DEFAULT_REPO_CONFIG: Omit<FolderRepoConfig, "folderPath"> = {
     isPrivate: true,
 };
 
-/** Replace template placeholders in a commit message */
-export function renderCommitMessage(template: string): string {
-    const msg = (template || DEFAULT_REPO_CONFIG.commitMessageTemplate).split("{{date}}").join(new Date().toISOString());
+/** Values available to commit message template placeholders */
+export interface CommitContext {
+    /** Repository folder, or the vault name for the vault root */
+    repo: string;
+    branch: string;
+    /** Number of files in the commit */
+    files: number;
+}
+
+/** A fixed message, or one rendered once the files and branch are known */
+export type CommitMessage = string | ((ctx: CommitContext) => string);
+
+/**
+ * Replace template placeholders in a commit message:
+ * {{date}} (ISO), {{time}} (local HH:MM), {{repo}}, {{branch}}, {{files}}.
+ * Context-based placeholders are left empty when no context is available.
+ */
+export function renderCommitMessage(template: string, ctx?: CommitContext): string {
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const values: Record<string, string> = {
+        date: now.toISOString(),
+        time,
+        repo: ctx?.repo ?? "",
+        branch: ctx?.branch ?? "",
+        files: ctx ? String(ctx.files) : "",
+    };
+    const msg = (template || DEFAULT_REPO_CONFIG.commitMessageTemplate)
+        .replace(/\{\{(date|time|repo|branch|files)\}\}/g, (_m, key: string) => values[key]);
     return msg.trim() || "vault backup";
 }
 
