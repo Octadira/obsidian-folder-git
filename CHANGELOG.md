@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2
+
+### Changed
+- Fix the Obsidian community review findings of 1.3.1: no lint suppressions, and no API newer than the minimum supported Obsidian version (1.7.2) is used directly. Destructive buttons keep their warning style.
+
 ## 1.3.1
 
 ### Security

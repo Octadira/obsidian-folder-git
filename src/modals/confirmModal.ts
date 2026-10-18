@@ -32,12 +32,12 @@ export class ConfirmModal extends Modal {
             .addButton((btn) =>
                 btn
                     .setButtonText(this.confirmText)
-                    // eslint-disable-next-line @typescript-eslint/no-deprecated -- setDestructive needs Obsidian 1.13+
-                    .setWarning()
                     .onClick(() => {
                         this.confirmed = true;
                         this.close();
                     })
+                    // Same styling as setWarning(), which is deprecated; setDestructive() needs Obsidian 1.13+
+                    .buttonEl.addClass("mod-warning")
             );
     }
 

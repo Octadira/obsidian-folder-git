@@ -50,6 +50,10 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
     /** Imperative rendering, used by Obsidian versions before 1.13 */
     display(): void {
+        this.renderLegacy();
+    }
+
+    private renderLegacy(): void {
         const { containerEl } = this;
         containerEl.empty();
 
@@ -65,9 +69,10 @@ export class FolderGitSettingsTab extends PluginSettingTab {
 
     /** Rebuild the tab after state that changes its structure (account status, repository list) */
     private rerender(): void {
-        if (typeof this.update === "function") this.update();
-        // eslint-disable-next-line @typescript-eslint/no-deprecated -- display() is still the renderer on Obsidian < 1.13 (minAppVersion 1.7.2)
-        else this.display();
+        // update() only exists on Obsidian 1.13+, where the declarative definitions are re-read
+        const tab = this as { update?: () => void };
+        if (tab.update) tab.update();
+        else this.renderLegacy();
     }
 
     private sections(): SettingSection[] {
@@ -377,8 +382,6 @@ export class FolderGitSettingsTab extends PluginSettingTab {
             build: (setting) =>
                 setting.addButton((btn) => {
                     btn.setButtonText("Remove")
-                        // eslint-disable-next-line @typescript-eslint/no-deprecated -- setDestructive needs Obsidian 1.13+
-                        .setWarning()
                         .onClick(voidHandler(async () => {
                             this.plugin.repoRegistry.removeRepo(repo.folderPath);
                             this.plugin.settings.repos = this.plugin.settings.repos.filter(
@@ -389,6 +392,8 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                             this.rerender();
                             await this.plugin.refreshViews();
                         }));
+                    // Same styling as setWarning(), which is deprecated; setDestructive() needs Obsidian 1.13+
+                    btn.buttonEl.addClass("mod-warning");
                 }),
         });
 
