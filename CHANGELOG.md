@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1
+
+### Security
+- Update `simple-git` to 4.0.2, which brings `@simple-git/argv-parser` 2.0.1 and addresses a published advisory (the `VISUAL` editor variable was missing from unsafe-editor detection; affected `@simple-git/argv-parser` < 2.0.1). Environment variables such as `GIT_SSH_COMMAND` or `EDITOR` keep being passed to Git as in a terminal.
+
+### Changed
+- Settings use Obsidian's declarative settings API on 1.13+, so the plugin's settings now show up in the settings search. Older versions keep the previous layout.
+- The Forgejo note and the token-storage note are now rows of their own ("Instance URL" description and "About tokens").
+
 ## 1.3.0
 
 ### Added

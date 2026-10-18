@@ -1,4 +1,4 @@
-import simpleGit, { CheckRepoActions, type SimpleGit, type SimpleGitOptions } from "simple-git";
+import { simpleGit, CheckRepoActions, type SimpleGit, type SimpleGitOptions } from "simple-git";
 import { FileSystemAdapter, Notice } from "obsidian";
 import { fs, processEnv } from "./nodeApi";
 import {
@@ -34,9 +34,10 @@ const ENV_UNSAFE_CATEGORIES: Record<string, string> = {
     git_config_global: "allowUnsafeConfigPaths",
     git_config_system: "allowUnsafeConfigPaths",
     git_config_count: "allowUnsafeConfigEnvCount",
+    git_config_parameters: "allowUnsafeConfigEnvCount",
     git_config: "allowUnsafeConfigPaths",
     git_editor: "allowUnsafeEditor",
-    git_exec_path: "allowUnsafeConfigPaths",
+    git_exec_path: "allowUnsafeExec",
     git_external_diff: "allowUnsafeDiffExternal",
     git_pager: "allowUnsafePager",
     git_proxy_command: "allowUnsafeGitProxy",
@@ -47,6 +48,7 @@ const ENV_UNSAFE_CATEGORIES: Record<string, string> = {
     pager: "allowUnsafePager",
     prefix: "allowUnsafeConfigPaths",
     ssh_askpass: "allowUnsafeAskPass",
+    visual: "allowUnsafeEditor",
 };
 
 /**
@@ -107,6 +109,9 @@ export class RepoRegistry {
             binary: binary || undefined,
             config: ["core.quotepath=off", ...extraConfig],
             unsafe,
+            // simple-git 4 strips (or rejects) GIT_*, EDITOR, PAGER... unless named here. They come from
+            // the user's own environment, so keep passing them through as a terminal would.
+            allowEnvironment: Object.keys(env),
         };
         return simpleGit(options).env(env);
     }
