@@ -27,7 +27,7 @@
   - Create a new remote repository while adding a folder: under your account or one of your organizations, private or public.
   - Forgejo: create a new organization from the same dialog.
   - Clone private repositories over HTTPS.
-- **Auto-backup.** Per-repository auto-commit interval, commit message template (`{{date}}` placeholder) and auto-push after every commit.
+- **Auto-backup.** Per-repository auto-commit interval, commit message template (placeholders such as `{{date}}`, `{{branch}}` and `{{files}}`) and auto-push after every commit. Failures are shown in the panel and the status bar.
 - **`.gitignore` tools.** Built-in `.gitignore` editor, plus *Add to / Remove from .gitignore* in the file explorer context menu.
 - **Context menu.** Right-click a folder to add it as a repository. On a repository root folder you can open Source Control or History, pull, push, or edit `.gitignore`.
 
@@ -68,7 +68,7 @@
 Open it from the ribbon icon or with **Folder Git: Open source control**.
 
 - Click a repository in the list to switch to it. The dot and counter show pending changes.
-- Header buttons: **Refresh**, **Pull**, **Push**, **Sync**, and a **⋯** menu with Fetch, Open history, Edit `.gitignore` and Add folder repository.
+- Header buttons: **Refresh**, **Pull**, **Push**, **Sync**, and a **⋯** menu with Fetch, Open history, Edit `.gitignore`, branch actions (switch, new, merge, delete), Stash, Amend / Undo last commit and Add folder repository. Click the branch name to switch branch.
 - On each file: `+` stages, `−` unstages, `↩` discards, and the file icon opens the note. Click the row to view its diff, or right-click for more actions.
 
 ### Commands
