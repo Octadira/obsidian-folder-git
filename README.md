@@ -1,7 +1,10 @@
 # Folder Git
 
+![Version](https://img.shields.io/badge/version-1.3.3-blue)
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/Octadira/obsidian-folder-git)
 ![GitHub downloads](https://img.shields.io/github/downloads/Octadira/obsidian-folder-git/total)
+![Obsidian](https://img.shields.io/badge/Obsidian-1.7.2%2B-7C3AED?logo=obsidian&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-desktop-lightgrey)
 ![License](https://img.shields.io/github/license/Octadira/obsidian-folder-git)
 
 **Folder Git** brings VS Code-style Git source control to Obsidian. Unlike plugins that treat the whole vault as a single repository, Folder Git lets you manage **multiple independent Git repositories, one per folder**. It works with **GitHub** and **Forgejo / Gitea** (including [Codeberg](https://codeberg.org) and self-hosted instances).
@@ -93,7 +96,7 @@ The *active repo* is the one containing the file you are editing. Otherwise it i
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| Git binary path | *(empty)* | Path to the `git` executable. Leave empty to use the one on your `PATH`. Takes effect after reloading the plugin. |
+| Git binary path | *(empty)* | Path to the `git` executable (stored locally per device, never in `data.json`). Leave empty to use the one on your `PATH`. Takes effect after reloading the plugin. |
 | Show untracked files | On | Show untracked files in the Source Control panel. |
 | Status refresh interval | 30 s | How often `git status` runs for each repository. `0` turns auto-refresh off. |
 
@@ -131,17 +134,18 @@ Tokens are only needed to **create remote repositories** and to **push, pull or 
 
 ### Where tokens are stored
 
-Tokens are saved **unencrypted** in the plugin's settings file: `<vault>/.obsidian/plugins/folder-git/data.json`. Anything that copies that file copies your tokens.
+Tokens are stored **outside the vault** in Obsidian's built-in `SecretStorage` (on Obsidian 1.11.4+) or in device-local `localStorage` on older versions — never in `<vault>/.obsidian/plugins/folder-git/data.json`.
 
-- **Vault root as a repository.** *Commit all* and auto-commit stage everything, including `.obsidian/`. When you add the vault root as a repository, the plugin adds `.obsidian/plugins/folder-git/data.json` to the vault's `.gitignore` (unless Git already ignores it). It also warns you if the file is already committed; in that case run `git rm --cached` on it and revoke the tokens if you pushed it.
-- **Other sync tools.** Obsidian Sync (when *Installed community plugins* sync is on), iCloud, Dropbox and similar tools copy `data.json` to your other devices. Exclude the file, or accept that the token lives there too.
-- **Least privilege.** Use a fine-grained or narrowly scoped token with an expiry date, and revoke it if the file ever leaks.
+- **Vault sync & Git safety.** Because tokens are not written to `data.json`, syncing your vault with Obsidian Sync, iCloud, Dropbox, Syncthing or a parent Git repository does not expose your tokens. Existing tokens saved in `data.json` by versions before 1.3.3 are migrated automatically and removed from `data.json` on load.
+- **Vault root as a repository.** When you add the vault root as a repository, the plugin still ensures `.obsidian/plugins/folder-git/data.json` is ignored and warns you if it was already committed in an earlier version (in that case run `git rm --cached` on it and revoke any previously committed tokens).
+- **Per-device Git binary path.** The custom **Git binary path** setting is also stored locally per device rather than in `data.json`, so opening a shared vault cannot override the executable that runs.
+- **Least privilege.** Use a fine-grained or narrowly scoped token with an expiry date, and revoke it if it ever leaks.
 
 ### How tokens are used
 
 - **API calls.** When you validate a token, create a repository or organization, or list organizations, the token is sent in the `Authorization` header to `api.github.com` or to `<your Forgejo instance>/api/v1`. It is never put in a URL.
-- **Git operations.** During push, pull, sync, fetch and clone, the token is handed to that one Git process through environment variables. A credential helper passed on the command line (`-c credential.helper=…`) reads them. Nothing is written to `.git/config`, to a credentials file or to the remote URL.
-- **Host matching.** A token is only offered to an `https://` remote whose host (and port) exactly matches `github.com` or your Forgejo instance. Other remotes never see it.
+- **Git operations.** During push, pull, sync, fetch and clone, the token is handed to that one Git process through environment variables. A command-line credential helper scoped to the exact origin (`-c credential.<protocol>://<host>.helper=…`) verifies both `protocol` and `host` from Git's `stdin` before answering. Nothing is written to `.git/config`, to a credentials file or to the remote URL.
+- **Host matching.** A token is only offered to an `https://` remote whose host (and port) exactly matches `github.com` or your Forgejo instance, resolved against the branch's actual tracking remote. Redirects to other hosts and unrelated remotes never receive it.
 - **Other credential helpers.** For matching hosts, the plugin's helper replaces any configured helper (such as Git Credential Manager or the macOS keychain) for that command. For every other host, your normal Git configuration applies.
 - **No prompts.** Network operations run with `GIT_TERMINAL_PROMPT=0`, so Git fails instead of waiting for a password it cannot ask for.
 - **Process environment.** While a network operation runs, the token is in the Git process's environment. Other programs running as your user could read it there.
@@ -149,7 +153,7 @@ Tokens are saved **unencrypted** in the plugin's settings file: `<vault>/.obsidi
 
 ### Plain `http://`
 
-Tokens are never sent to `http://` remotes, with one exception. If you configure a Forgejo instance on `http://`, its `http://` remotes receive the token unencrypted, and the plugin warns you when you validate it.
+Tokens are never sent to public `http://` remotes. Plain `http://` Forgejo instances are only allowed for `localhost` and private/LAN addresses (such as `127.0.0.1`, `192.168.x.x`, `10.x.x.x`, `*.local`), and require explicit confirmation before sending your token unencrypted.
 
 ### Network access
 
@@ -157,9 +161,9 @@ The plugin only connects to `api.github.com`, the Forgejo instance you configure
 
 ### Local changes
 
-- The plugin runs Git only in the folders you add, plus `git clone` into the folder you choose.
+- The plugin runs Git only in folders strictly inside your vault (verified against path traversal and symlinks), plus `git clone` into the folder you choose.
 - It writes `.gitignore` only when you use the `.gitignore` editor or the *Add to / Remove from .gitignore* actions.
-- Git runs with your environment, so variables such as `GIT_SSH_COMMAND`, `EDITOR` or `GIT_ASKPASS` apply exactly as they do in a terminal.
+- Git runs non-interactively with risky environment overrides (`GIT_ASKPASS`, `GIT_EXEC_PATH`, `GIT_CONFIG*`, `GIT_EXTERNAL_DIFF`, `EDITOR`, `PAGER`, etc.) stripped, while preserving `GIT_SSH` / `GIT_SSH_COMMAND` for SSH remotes.
 
 ### Upgrading from 1.0.x
 

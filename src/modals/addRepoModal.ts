@@ -417,11 +417,14 @@ export class AddRepoModal extends Modal {
                 return;
             }
             if (this.cloneSubfolder) {
-                if (/[\\:*?"<>|]|(^|\/)\.\.(\/|$)/.test(this.cloneSubfolder)) {
+                const sub = this.cloneSubfolder;
+                const segments = sub.split("/");
+                const hasReserved = segments.some((s) => s === "" || s === "." || s === ".." || s === ".git" || s === this.app.vault.configDir);
+                if (/[\\:*?"<>|\0]/.test(sub) || sub.startsWith("/") || hasReserved) {
                     new Notice("Invalid subfolder name.");
                     return;
                 }
-                folderPath = folderPath ? `${folderPath}/${this.cloneSubfolder}` : this.cloneSubfolder;
+                folderPath = folderPath ? `${folderPath}/${sub}` : sub;
             }
         }
 

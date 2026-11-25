@@ -1,4 +1,5 @@
 import * as nodeFs from "fs";
+import * as nodePath from "path";
 import * as nodeProcess from "process";
 
 /**
@@ -11,9 +12,19 @@ export interface FsApi {
     readFileSync(path: string, encoding: "utf8"): string;
     writeFileSync(path: string, data: string): void;
     unlinkSync(path: string): void;
+    realpathSync(path: string): string;
+    statSync(path: string): { isFile(): boolean };
+}
+
+export interface PathApi {
+    resolve(...paths: string[]): string;
+    relative(from: string, to: string): string;
+    isAbsolute(p: string): boolean;
+    basename(p: string): string;
 }
 
 export const fs = nodeFs as unknown as FsApi;
+export const path = nodePath as unknown as PathApi;
 
 type EnvMap = Record<string, string | undefined>;
 

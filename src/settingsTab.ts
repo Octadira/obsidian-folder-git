@@ -4,6 +4,7 @@ import type { FolderRepoConfig } from "./types";
 import { GitHubService } from "./hosting/githubService";
 import { ForgejoService } from "./hosting/forgejoService";
 import { normalizeInstanceUrl, type HostingService } from "./hosting/hostingService";
+import { ConfirmModal } from "./modals/confirmModal";
 
 /** One settings row, defined once and rendered by both the declarative API and the legacy `display()` */
 interface SettingSpec {
@@ -243,7 +244,12 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                                         return;
                                     }
                                     if (baseUrl.startsWith("http://")) {
-                                        new Notice("Warning: this instance does not use HTTPS, so your token will be sent unencrypted.");
+                                        const confirmed = await new ConfirmModal(
+                                            this.app,
+                                            "This instance does not use HTTPS, so your access token will be sent unencrypted over the network. Continue anyway?",
+                                            "Continue"
+                                        ).ask();
+                                        if (!confirmed) return;
                                     }
                                     btn.setButtonText("Checking...").setDisabled(true);
                                     settings.forgejoUrl = baseUrl;
@@ -256,7 +262,7 @@ export class FolderGitSettingsTab extends PluginSettingTab {
                 },
                 {
                     name: "About tokens",
-                    desc: "Tokens are stored in this vault's plugin data and are only passed to Git through environment variables during push, pull, fetch and clone over HTTPS for the matching host. SSH remotes use your SSH keys.",
+                    desc: "Tokens are stored outside the vault in Obsidian's secret storage (not in data.json) and are only passed to Git through a host-verified environment credential helper during HTTPS operations for the matching host. SSH remotes use your SSH keys.",
                 },
             ],
         };

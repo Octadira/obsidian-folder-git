@@ -1,6 +1,6 @@
 import { simpleGit, CheckRepoActions, type SimpleGit, type SimpleGitOptions } from "simple-git";
 import { FileSystemAdapter, Notice } from "obsidian";
-import { fs, processEnv } from "./nodeApi";
+import { fs, path, processEnv } from "./nodeApi";
 import {
     renderCommitMessage,
     type FolderRepoConfig,
@@ -15,41 +15,47 @@ import {
     type ConflictSide,
     type FolderGitPluginInterface,
 } from "./types";
-import { findAccountForRemote } from "./hosting/hostingService";
+import { findAccountForRemote, httpRemoteHost } from "./hosting/hostingService";
 
 /**
- * Git credential helper that answers "get" requests from environment variables.
+ * Git credential helper that answers "get" requests from environment variables,
+ * strictly verifying that both protocol and host on stdin match the intended remote.
  * The token is passed to the git child process via env only — it is never written
  * to disk, to .git/config, or embedded in remote URLs.
  */
 const ENV_CREDENTIAL_HELPER =
-    '!f() { test "$1" = get || return 0; echo "username=$FOLDER_GIT_USERNAME"; echo "password=$FOLDER_GIT_TOKEN"; }; f';
+    '!f() { test "$1" = get || return 0; p=""; h=""; ' +
+    'while IFS="=" read -r k v; do test -z "$k" && break; ' +
+    'case "$k" in protocol) p="$v";; host) h="$v";; esac; done; ' +
+    'test "$p" = "$FOLDER_GIT_PROTOCOL" && test "$h" = "$FOLDER_GIT_HOST" || return 0; ' +
+    'printf "username=%s\\npassword=%s\\n" "$FOLDER_GIT_USERNAME" "$FOLDER_GIT_TOKEN"; }; f';
 
 type EnvMap = Record<string, string | undefined>;
 
-/** Environment variables (lowercase) that simple-git blocks unless the matching unsafe flag is set */
-const ENV_UNSAFE_CATEGORIES: Record<string, string> = {
-    editor: "allowUnsafeEditor",
-    git_askpass: "allowUnsafeAskPass",
-    git_config_global: "allowUnsafeConfigPaths",
-    git_config_system: "allowUnsafeConfigPaths",
-    git_config_count: "allowUnsafeConfigEnvCount",
-    git_config_parameters: "allowUnsafeConfigEnvCount",
-    git_config: "allowUnsafeConfigPaths",
-    git_editor: "allowUnsafeEditor",
-    git_exec_path: "allowUnsafeExec",
-    git_external_diff: "allowUnsafeDiffExternal",
-    git_pager: "allowUnsafePager",
-    git_proxy_command: "allowUnsafeGitProxy",
-    git_template_dir: "allowUnsafeTemplateDir",
-    git_sequence_editor: "allowUnsafeEditor",
-    git_ssh: "allowUnsafeSshCommand",
-    git_ssh_command: "allowUnsafeSshCommand",
-    pager: "allowUnsafePager",
-    prefix: "allowUnsafeConfigPaths",
-    ssh_askpass: "allowUnsafeAskPass",
-    visual: "allowUnsafeEditor",
-};
+/**
+ * Environment variables (lowercase) stripped from git child processes because this plugin
+ * runs git non-interactively and should not inherit risky config/exec/askpass overrides.
+ */
+const STRIPPED_ENV_KEYS = new Set([
+    "editor",
+    "git_askpass",
+    "git_config",
+    "git_config_count",
+    "git_config_global",
+    "git_config_parameters",
+    "git_config_system",
+    "git_editor",
+    "git_exec_path",
+    "git_external_diff",
+    "git_pager",
+    "git_proxy_command",
+    "git_sequence_editor",
+    "git_template_dir",
+    "pager",
+    "prefix",
+    "ssh_askpass",
+    "visual",
+]);
 
 /**
  * RepoRegistry: manages N SimpleGit instances, one per configured folder.
@@ -71,19 +77,35 @@ export class RepoRegistry {
         return (this.plugin.app.vault.adapter as FileSystemAdapter).getBasePath();
     }
 
-    /** Resolve a vault-relative folder path to an absolute path */
+    /** Resolve a vault-relative folder path to an absolute path, enforcing vault containment */
     resolveAbsolutePath(folderPath: string): string {
-        if (folderPath === "" || folderPath === "/") return this.vaultBasePath;
-        return `${this.vaultBasePath}/${folderPath}`;
+        const base = path.resolve(this.vaultBasePath);
+        if (folderPath === "" || folderPath === "/") return base;
+        if (folderPath.includes("\0")) {
+            throw new Error(`Invalid repository path "${folderPath}".`);
+        }
+        const cleaned = folderPath.replace(/^\/+/, "");
+        const resolved = path.resolve(base, cleaned);
+        const rel = path.relative(base, resolved);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+            throw new Error(`Repository path "${folderPath}" escapes the vault directory.`);
+        }
+        if (fs.existsSync(resolved) && fs.existsSync(base)) {
+            const realBase = fs.realpathSync(base);
+            const realResolved = fs.realpathSync(resolved);
+            const realRel = path.relative(realBase, realResolved);
+            if (realRel.startsWith("..") || path.isAbsolute(realRel)) {
+                throw new Error(`Repository path "${folderPath}" points outside the vault directory.`);
+            }
+        }
+        return resolved;
     }
 
     /**
      * Create a simple-git instance.
      *
-     * simple-git refuses to run when the environment contains variables such as EDITOR,
-     * PAGER or GIT_SSH_COMMAND unless the matching `unsafe` flag is set. Those come from the
-     * user's own environment (trusted), so the flags are enabled only for variables that are
-     * actually present — keeping git's behavior identical to running it from a terminal.
+     * Strips interactive/risky Git environment overrides so simple-git's built-in
+     * safety guards remain active. Only SSH command variables are preserved if present.
      */
     private createGit(
         baseDir: string | undefined,
@@ -92,16 +114,27 @@ export class RepoRegistry {
         allowCredentialHelper = false
     ): SimpleGit {
         const binary = this.plugin.settings.gitBinaryPath.trim();
-        const env: EnvMap = { ...processEnv(), ...extraEnv };
+        if (binary) {
+            if (/[\r\n\0]/.test(binary) || !fs.existsSync(binary) || !fs.statSync(binary).isFile()) {
+                throw new Error(`Invalid Git binary path: "${binary}".`);
+            }
+        }
+
+        const env: EnvMap = {};
+        for (const [key, value] of Object.entries(processEnv())) {
+            if (!STRIPPED_ENV_KEYS.has(key.toLowerCase().trim())) {
+                env[key] = value;
+            }
+        }
+        Object.assign(env, extraEnv);
 
         const unsafe: Record<string, boolean> = {};
         // User-provided binary paths commonly contain spaces (e.g. "C:\Program Files\Git\...")
         if (binary) unsafe.allowUnsafeCustomBinary = true;
-        // Only our fixed ENV_CREDENTIAL_HELPER is ever passed as credential.helper
+        // Only our fixed, host-verified ENV_CREDENTIAL_HELPER is ever passed as credential.helper
         if (allowCredentialHelper) unsafe.allowUnsafeCredentialHelper = true;
-        for (const key of Object.keys(env)) {
-            const category = ENV_UNSAFE_CATEGORIES[key.toLowerCase().trim()];
-            if (category) unsafe[category] = true;
+        if ("GIT_SSH" in env || "GIT_SSH_COMMAND" in env) {
+            unsafe.allowUnsafeSshCommand = true;
         }
 
         const options: Partial<SimpleGitOptions> = {
@@ -109,8 +142,6 @@ export class RepoRegistry {
             binary: binary || undefined,
             config: ["core.quotepath=off", ...extraConfig],
             unsafe,
-            // simple-git 4 strips (or rejects) GIT_*, EDITOR, PAGER... unless named here. They come from
-            // the user's own environment, so keep passing them through as a terminal would.
             allowEnvironment: Object.keys(env),
         };
         return simpleGit(options).env(env);
@@ -119,21 +150,30 @@ export class RepoRegistry {
     /**
      * Create a short-lived git instance for network operations against `remoteUrl`.
      * If a configured hosting account matches the remote host, credentials are
-     * supplied through an env-based credential helper.
+     * supplied through a host-scoped, env-based credential helper.
      */
     private networkGit(baseDir: string | undefined, remoteUrl: string): SimpleGit {
         const env: EnvMap = { GIT_TERMINAL_PROMPT: "0" };
 
         const account = findAccountForRemote(this.plugin.settings, remoteUrl);
-        if (!account) return this.createGit(baseDir, env);
+        const remote = httpRemoteHost(remoteUrl);
+        if (!account || !remote) return this.createGit(baseDir, env);
 
+        if (/[\r\n]/.test(account.username) || /[\r\n]/.test(account.token)) {
+            throw new Error("Invalid characters in hosting credentials.");
+        }
+
+        env.FOLDER_GIT_PROTOCOL = remote.protocol;
+        env.FOLDER_GIT_HOST = remote.host;
         env.FOLDER_GIT_USERNAME = account.username;
         env.FOLDER_GIT_TOKEN = account.token;
-        // Empty value resets inherited helpers so ours is the only one consulted
+
+        const origin = `${remote.protocol}://${remote.host}`;
+        // Empty value resets inherited helpers; scope our helper to the exact origin
         return this.createGit(
             baseDir,
             env,
-            ["credential.helper=", `credential.helper=${ENV_CREDENTIAL_HELPER}`],
+            ["credential.helper=", `credential.${origin}.helper=${ENV_CREDENTIAL_HELPER}`],
             true
         );
     }
@@ -333,8 +373,9 @@ export class RepoRegistry {
 
     /** Stage files in a repo */
     async stage(folderPath: string, files: string[]): Promise<void> {
+        if (files.length === 0) return;
         const instance = this.require(folderPath);
-        await this.exclusive(folderPath, () => instance.git.add(files));
+        await this.exclusive(folderPath, () => instance.git.add(["--", ...files]));
     }
 
     /** Stage all files in a repo */
@@ -517,8 +558,23 @@ export class RepoRegistry {
     }
 
     /** Refuse names git could mistake for an option */
-    private assertRefName(name: string): void {
-        if (!name || name.startsWith("-")) throw new Error(`Invalid branch name "${name}".`);
+    private assertRefName(name: string, label = "branch"): void {
+        if (!name || name.startsWith("-") || /[\r\n\0]/.test(name)) {
+            throw new Error(`Invalid ${label} name "${name}".`);
+        }
+    }
+
+    /** Allow only safe remote URL schemes and refuse option-like strings */
+    private assertRemoteUrl(url: string): void {
+        const trimmed = url.trim();
+        if (!trimmed || trimmed.startsWith("-") || /[\r\n\0]/.test(trimmed)) {
+            throw new Error(`Invalid remote URL "${url}".`);
+        }
+        const isHttpOrSsh = /^(https?|ssh|git):\/\/.+/i.test(trimmed);
+        const isScpSsh = /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:.+/.test(trimmed);
+        if (!isHttpOrSsh && !isScpSsh) {
+            throw new Error(`Unsupported remote URL scheme. Use https://, ssh://, git://, or user@host:path.`);
+        }
     }
 
     /** Checkout a local branch, or create a tracking branch from a "remote/name" ref */
@@ -648,22 +704,25 @@ export class RepoRegistry {
 
     /** Clone a repo into a folder (uses configured hosting credentials when the host matches) */
     async cloneRepo(url: string, absolutePath: string): Promise<void> {
+        this.assertRemoteUrl(url);
         if (fs.existsSync(absolutePath) && fs.readdirSync(absolutePath).length > 0) {
             throw new Error("Target folder is not empty. Choose an empty folder or a new subfolder name.");
         }
-        await this.networkGit(undefined, url).clone(url, absolutePath);
+        await this.networkGit(undefined, url).raw(["clone", "--", url, absolutePath]);
     }
 
     /** Add a remote, or update its URL if it already exists */
     async setRemoteUrl(folderPath: string, name: string, url: string): Promise<void> {
         const instance = this.require(folderPath);
         if (!url) return;
+        this.assertRefName(name, "remote");
+        this.assertRemoteUrl(url);
         await this.exclusive(folderPath, async () => {
             const remotes = await instance.git.getRemotes();
             if (remotes.some((r) => r.name === name)) {
-                await instance.git.remote(["set-url", name, url]);
+                await instance.git.raw(["remote", "set-url", "--", name, url]);
             } else {
-                await instance.git.addRemote(name, url);
+                await instance.git.raw(["remote", "add", "--", name, url]);
             }
         });
     }
@@ -704,13 +763,26 @@ export class RepoRegistry {
         }
     }
 
-    /** URL of the repo's configured remote, or "" if it has none */
-    private async getRemoteUrl(instance: RepoInstance): Promise<string> {
-        const remoteName = instance.config.remoteName || "origin";
+    /** URL of the repo's target remote (preferring the tracking remote when `tracking` is provided) */
+    private async getRemoteUrl(instance: RepoInstance, tracking?: string): Promise<string> {
         const remotes = await instance.git.getRemotes(true);
-        const remote = remotes.find((r) => r.name === remoteName);
+        let remote: (typeof remotes)[number] | undefined;
+
+        if (tracking) {
+            // Match the longest configured remote name that prefixes "<remote>/<branch>"
+            const matches = remotes
+                .filter((r) => tracking.startsWith(`${r.name}/`))
+                .sort((a, b) => b.name.length - a.name.length);
+            remote = matches[0];
+        }
+
         if (!remote) {
-            throw new Error(`Remote "${remoteName}" is not configured. Set a remote URL in the plugin settings.`);
+            const remoteName = instance.config.remoteName || "origin";
+            this.assertRefName(remoteName, "remote");
+            remote = remotes.find((r) => r.name === remoteName);
+            if (!remote) {
+                throw new Error(`Remote "${remoteName}" is not configured. Set a remote URL in the plugin settings.`);
+            }
         }
         return remote.refs.push || remote.refs.fetch || "";
     }
@@ -726,9 +798,9 @@ export class RepoRegistry {
             throw new Error("No commits yet — commit before pushing.");
         }
 
-        const remoteUrl = await this.getRemoteUrl(instance);
-        const net = this.networkGit(instance.absolutePath, remoteUrl);
         const status = await instance.git.status();
+        const remoteUrl = await this.getRemoteUrl(instance, status.tracking || undefined);
+        const net = this.networkGit(instance.absolutePath, remoteUrl);
 
         if (!status.tracking) {
             // First push — set upstream
@@ -736,6 +808,8 @@ export class RepoRegistry {
                 throw new Error("Cannot push from a detached HEAD.");
             }
             const remoteName = instance.config.remoteName || "origin";
+            this.assertRefName(remoteName, "remote");
+            this.assertRefName(status.current);
             await net.push(["-u", remoteName, status.current]);
         } else {
             await net.push();
@@ -749,9 +823,9 @@ export class RepoRegistry {
     }
 
     private async pullUnlocked(instance: RepoInstance): Promise<void> {
-        const remoteUrl = await this.getRemoteUrl(instance);
-        const net = this.networkGit(instance.absolutePath, remoteUrl);
         const status = await instance.git.status();
+        const remoteUrl = await this.getRemoteUrl(instance, status.tracking || undefined);
+        const net = this.networkGit(instance.absolutePath, remoteUrl);
 
         if (status.tracking) {
             await net.pull();
@@ -762,6 +836,8 @@ export class RepoRegistry {
             throw new Error("Cannot pull into a detached HEAD.");
         }
         const remoteName = instance.config.remoteName || "origin";
+        this.assertRefName(remoteName, "remote");
+        this.assertRefName(status.current);
         await net.fetch(remoteName);
         const remoteBranches = await instance.git.branch(["-r"]);
         const remoteRef = `${remoteName}/${status.current}`;
@@ -788,8 +864,10 @@ export class RepoRegistry {
     async fetch(folderPath: string): Promise<void> {
         const instance = this.require(folderPath);
         await this.exclusive(folderPath, async () => {
+            const remoteName = instance.config.remoteName || "origin";
+            this.assertRefName(remoteName, "remote");
             const remoteUrl = await this.getRemoteUrl(instance);
-            await this.networkGit(instance.absolutePath, remoteUrl).fetch(instance.config.remoteName || "origin");
+            await this.networkGit(instance.absolutePath, remoteUrl).fetch(remoteName);
         });
     }
 
@@ -888,7 +966,7 @@ export class RepoRegistry {
 
         try {
             // check-ignore exits 0 if ignored, 1 if not (simple-git throws on non-zero)
-            await instance.git.raw(["check-ignore", "-q", relativePath]);
+            await instance.git.raw(["check-ignore", "-q", "--", relativePath]);
             return true;
         } catch {
             return false;

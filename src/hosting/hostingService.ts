@@ -58,10 +58,20 @@ export interface HostingAccount {
     allowHttp: boolean;
 }
 
+/** Whether a hostname refers to localhost or a private/LAN network address */
+export function isLocalHost(hostname: string): boolean {
+    const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (h === "localhost" || h === "::1" || h.endsWith(".local")) return true;
+    const ipv4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!ipv4) return false;
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
 /**
  * Normalize a user-entered Forgejo instance URL:
  * trims, removes trailing slashes and a trailing "/api/v1".
- * Throws if the URL is not http(s).
+ * Enforces HTTPS except for local or private-network instances.
  */
 export function normalizeInstanceUrl(input: string): string {
     let value = input.trim().replace(/\/+$/, "");
@@ -71,15 +81,19 @@ export function normalizeInstanceUrl(input: string): string {
     if (url.protocol !== "https:" && url.protocol !== "http:") {
         throw new Error("Instance URL must start with https:// or http://");
     }
+    if (url.protocol === "http:" && !isLocalHost(url.hostname)) {
+        throw new Error("Plain http:// is only allowed for local or private-network instances. Use https:// instead.");
+    }
     return value;
 }
 
 /** Scheme and "host[:port]" of an http(s) remote URL, or null for SSH/other remotes */
-export function httpRemoteHost(remoteUrl: string): { secure: boolean; host: string } | null {
+export function httpRemoteHost(remoteUrl: string): { protocol: "https" | "http"; secure: boolean; host: string } | null {
     if (!/^https?:\/\//i.test(remoteUrl)) return null;
     try {
         const url = new URL(remoteUrl);
-        return { secure: url.protocol === "https:", host: url.host.toLowerCase() };
+        const secure = url.protocol === "https:";
+        return { protocol: secure ? "https" : "http", secure, host: url.host.toLowerCase() };
     } catch {
         return null;
     }

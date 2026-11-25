@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.3
+
+### Security
+- **Token storage:** GitHub and Forgejo access tokens are no longer stored in `data.json` inside the vault. They are now stored in Obsidian's `SecretStorage` (falling back to device-local `localStorage` on Obsidian versions before 1.11.4). Existing tokens in `data.json` are migrated automatically and removed from the file on load.
+- **Per-device Git binary path:** `gitBinaryPath` is now stored locally per device instead of in `data.json`, preventing a shared or untrusted vault's `data.json` from executing an arbitrary binary on startup. The path is also validated before execution.
+- **Host-verified credential helper:** The temporary Git credential helper now parses `protocol` and `host` from Git's `stdin` and is scoped to the exact remote origin (`credential.<origin>.helper`), preventing tokens from leaking on HTTP redirects, submodules or mismatched remotes. Push and pull also resolve credentials against the branch's actual tracking remote.
+- **Hardened Git environment:** Interactive and risky Git environment overrides (such as `GIT_ASKPASS`, `GIT_EXEC_PATH`, `GIT_CONFIG*`, `GIT_EXTERNAL_DIFF`, `GIT_PROXY_COMMAND`, `EDITOR`, `PAGER`) are stripped from Git child processes instead of disabling `simple-git` safety checks. `GIT_SSH` / `GIT_SSH_COMMAND` continue to work.
+- **Path containment:** Repository paths (including entries loaded from `data.json` and symlinks) are resolved and verified to stay strictly inside the vault directory. Clone subfolder validation also blocks leading `/`, `.git` and the vault's config directory.
+- **Git argument safety:** Added `--` separators and ref/URL validation across `stage`, `clone`, `remote`, `push`, `pull`, `fetch` and `check-ignore` to prevent Git option injection.
+- **Plain `http://` restriction:** Forgejo `http://` URLs are now restricted to `localhost` and private-network addresses and require explicit confirmation before sending the access token unencrypted.
+
 ## 1.3.2
 
 ### Changed

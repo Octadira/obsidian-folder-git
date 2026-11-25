@@ -316,9 +316,71 @@ export default class FolderGitPlugin extends Plugin {
 
     // ─── Settings ───────────────────────────────────────────────────────
 
+    private readSecret(id: string): string {
+        const storage = this.app.secretStorage;
+        if (storage) {
+            return storage.getSecret(id) ?? "";
+        }
+        const local = this.app.loadLocalStorage(id) as unknown;
+        return typeof local === "string" ? local : "";
+    }
+
+    private writeSecret(id: string, value: string): void {
+        const storage = this.app.secretStorage;
+        if (storage) {
+            storage.setSecret(id, value);
+            // Clean up any pre-1.11.4 localStorage fallback entry
+            this.app.saveLocalStorage(id, null);
+            return;
+        }
+        this.app.saveLocalStorage(id, value || null);
+    }
+
+    private readLocalString(key: string): string {
+        const val = this.app.loadLocalStorage(key) as unknown;
+        return typeof val === "string" ? val : "";
+    }
+
     async loadSettings(): Promise<void> {
         const data = ((await this.loadData()) ?? {}) as Partial<PluginSettings>;
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+        const legacyGithubToken = typeof data.githubToken === "string" ? data.githubToken.trim() : "";
+        const legacyForgejoToken = typeof data.forgejoToken === "string" ? data.forgejoToken.trim() : "";
+        const legacyGitBinaryPath = typeof data.gitBinaryPath === "string" ? data.gitBinaryPath.trim() : "";
+
+        // Never execute a gitBinaryPath loaded from a potentially shared data.json
+        const safeData: Partial<PluginSettings> = { ...data };
+        delete safeData.githubToken;
+        delete safeData.forgejoToken;
+        delete safeData.gitBinaryPath;
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, safeData);
+
+        // Load tokens from secure/local storage (outside the vault); migrate legacy plaintext tokens
+        this.settings.githubToken = this.readSecret("folder-git-github-token");
+        this.settings.forgejoToken = this.readSecret("folder-git-forgejo-token");
+        this.settings.gitBinaryPath = this.readLocalString("folder-git-binary-path");
+
+        let migrated = false;
+        if (legacyGithubToken) {
+            if (!this.settings.githubToken) {
+                this.settings.githubToken = legacyGithubToken;
+                this.writeSecret("folder-git-github-token", legacyGithubToken);
+            }
+            migrated = true;
+        }
+        if (legacyForgejoToken) {
+            if (!this.settings.forgejoToken) {
+                this.settings.forgejoToken = legacyForgejoToken;
+                this.writeSecret("folder-git-forgejo-token", legacyForgejoToken);
+            }
+            migrated = true;
+        }
+        if (legacyGitBinaryPath) {
+            // Strip from data.json without executing; user can re-enter in settings if needed
+            migrated = true;
+            if (!this.settings.gitBinaryPath) {
+                new Notice("Folder Git: custom Git binary path is now stored locally per device. Re-enter it in settings if needed.", 8000);
+            }
+        }
 
         // Fill in fields added in newer versions and migrate renamed ones
         type LegacyRepoConfig = Partial<FolderRepoConfig> & { githubRepoName?: string; folderPath: string };
@@ -332,10 +394,23 @@ export default class FolderGitPlugin extends Plugin {
             }
             return repo;
         });
+
+        if (migrated) {
+            await this.saveSettings();
+        }
     }
 
     async saveSettings(): Promise<void> {
-        await this.saveData(this.settings);
+        // Persist secrets and machine-local binary path outside data.json
+        this.writeSecret("folder-git-github-token", this.settings.githubToken);
+        this.writeSecret("folder-git-forgejo-token", this.settings.forgejoToken);
+        this.app.saveLocalStorage("folder-git-binary-path", this.settings.gitBinaryPath || null);
+
+        const persisted: Partial<PluginSettings> = { ...this.settings };
+        delete persisted.githubToken;
+        delete persisted.forgejoToken;
+        delete persisted.gitBinaryPath;
+        await this.saveData(persisted);
     }
 
     // ─── Views ──────────────────────────────────────────────────────────
