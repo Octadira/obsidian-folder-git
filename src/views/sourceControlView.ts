@@ -306,7 +306,7 @@ export class SourceControlView extends ItemView {
                 if (this.status.ahead > 0) syncInfo.createSpan({ text: `↑${this.status.ahead}` });
                 if (this.status.behind > 0) syncInfo.createSpan({ text: `↓${this.status.behind}` });
             } else if (!this.status.tracking) {
-                branchBadge.createSpan({ cls: "folder-git-sync-info", text: "unpublished" });
+                branchBadge.createSpan({ cls: "folder-git-sync-info", text: "Unpublished" });
             }
         }
 

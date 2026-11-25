@@ -5,7 +5,9 @@
     "main": "main.js",
     "scripts": {
         "dev": "node esbuild.config.mjs",
-        "build": "node esbuild.config.mjs production"
+        "build": "node esbuild.config.mjs production",
+        "lint": "eslint .",
+        "check": "tsc --noEmit && eslint . && npm run build"
     },
     "keywords": [
         "obsidian",
@@ -21,7 +23,7 @@
         "@typescript-eslint/parser": "^8.55.0",
         "esbuild": "^0.20.0",
         "eslint": "^9.39.2",
-        "eslint-plugin-obsidianmd": "^0.1.9",
+        "eslint-plugin-obsidianmd": "^0.6.0",
         "globals": "^17.3.0",
         "obsidian": "1.14.4",
         "tslib": "^2.6.0",

@@ -79,7 +79,7 @@ export class AddRepoModal extends Modal {
             .setName("Folder")
             .setDesc("Select the folder to track with Git.")
             .addDropdown((dropdown) => {
-                dropdown.addOption("", "(vault root)");
+                dropdown.addOption("", "(Vault root)");
                 for (const f of this.getAllFolders()) {
                     dropdown.addOption(f, f);
                 }
@@ -232,8 +232,8 @@ export class AddRepoModal extends Modal {
         new Setting(contentEl)
             .setName("Visibility")
             .addDropdown((dropdown) => {
-                dropdown.addOption("private", "🔒 private");
-                dropdown.addOption("public", "🌐 public");
+                dropdown.addOption("private", "🔒 Private");
+                dropdown.addOption("public", "🌐 Public");
                 dropdown.setValue(this.isPrivate ? "private" : "public");
                 dropdown.onChange((value) => {
                     this.isPrivate = value === "private";
@@ -305,9 +305,9 @@ export class AddRepoModal extends Modal {
                     .onChange((value) => (this.newOrgName = value.trim()))
             )
             .addDropdown((dropdown) => {
-                dropdown.addOption("private", "🔒 private");
-                dropdown.addOption("limited", "👥 limited");
-                dropdown.addOption("public", "🌐 public");
+                dropdown.addOption("private", "🔒 Private");
+                dropdown.addOption("limited", "👥 Limited");
+                dropdown.addOption("public", "🌐 Public");
                 dropdown.setValue(this.newOrgVisibility);
                 dropdown.onChange((value) => (this.newOrgVisibility = value as OrgVisibility));
             })
