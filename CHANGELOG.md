@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+### Changed
+- Raised minimum Obsidian version (`minAppVersion`) to **1.11.4** to match `SecretStorage` (1.11.4+) and `loadLocalStorage`/`saveLocalStorage` (1.8.7+), resolving `obsidianmd/no-unsupported-api` review findings.
+- Simplified token storage to use Obsidian's built-in `SecretStorage` directly without the pre-1.11.4 `localStorage` fallback.
+
 ## 1.3.3
 
 ### Security

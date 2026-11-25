@@ -1,9 +1,8 @@
 # Folder Git
 
-![Version](https://img.shields.io/badge/version-1.3.3-blue)
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/Octadira/obsidian-folder-git)
 ![GitHub downloads](https://img.shields.io/github/downloads/Octadira/obsidian-folder-git/total)
-![Obsidian](https://img.shields.io/badge/Obsidian-1.7.2%2B-7C3AED?logo=obsidian&logoColor=white)
+![Obsidian](https://img.shields.io/badge/Obsidian-1.11.4%2B-7C3AED?logo=obsidian&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-desktop-lightgrey)
 ![License](https://img.shields.io/github/license/Octadira/obsidian-folder-git)
 
@@ -36,7 +35,7 @@
 
 ## Requirements
 
-- Obsidian **1.7.2** or later, **desktop only** (Windows, macOS, Linux).
+- Obsidian **1.11.4** or later, **desktop only** (Windows, macOS, Linux).
 - **Git** installed and available on your `PATH`, or its location set in the plugin settings.
 
 ## Installation
@@ -134,7 +133,7 @@ Tokens are only needed to **create remote repositories** and to **push, pull or 
 
 ### Where tokens are stored
 
-Tokens are stored **outside the vault** in Obsidian's built-in `SecretStorage` (on Obsidian 1.11.4+) or in device-local `localStorage` on older versions — never in `<vault>/.obsidian/plugins/folder-git/data.json`.
+Tokens are stored **outside the vault** in Obsidian's built-in `SecretStorage` — never in `<vault>/.obsidian/plugins/folder-git/data.json`.
 
 - **Vault sync & Git safety.** Because tokens are not written to `data.json`, syncing your vault with Obsidian Sync, iCloud, Dropbox, Syncthing or a parent Git repository does not expose your tokens. Existing tokens saved in `data.json` by versions before 1.3.3 are migrated automatically and removed from `data.json` on load.
 - **Vault root as a repository.** When you add the vault root as a repository, the plugin still ensures `.obsidian/plugins/folder-git/data.json` is ignored and warns you if it was already committed in an earlier version (in that case run `git rm --cached` on it and revoke any previously committed tokens).

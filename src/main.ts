@@ -317,23 +317,11 @@ export default class FolderGitPlugin extends Plugin {
     // ─── Settings ───────────────────────────────────────────────────────
 
     private readSecret(id: string): string {
-        const storage = this.app.secretStorage;
-        if (storage) {
-            return storage.getSecret(id) ?? "";
-        }
-        const local = this.app.loadLocalStorage(id) as unknown;
-        return typeof local === "string" ? local : "";
+        return this.app.secretStorage.getSecret(id) ?? "";
     }
 
     private writeSecret(id: string, value: string): void {
-        const storage = this.app.secretStorage;
-        if (storage) {
-            storage.setSecret(id, value);
-            // Clean up any pre-1.11.4 localStorage fallback entry
-            this.app.saveLocalStorage(id, null);
-            return;
-        }
-        this.app.saveLocalStorage(id, value || null);
+        this.app.secretStorage.setSecret(id, value);
     }
 
     private readLocalString(key: string): string {
